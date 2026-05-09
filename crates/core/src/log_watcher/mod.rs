@@ -5,9 +5,12 @@
 //! [`crate::db::repo::raw_log::insert_batch_with_ledger`] で raw + ledger を
 //! 同一 tx 永続化する。
 
+mod actor;
 mod file_identity;
 mod fs_event;
 mod line_buffer;
+
+pub use actor::{FsProbe, HandleOutcome, LogWatcherActor, ProbedFile, WatcherConfig};
 
 pub use file_identity::{
     compute_file_identity_hash, detect_bump, CurrentFileState, FileIdentity, GenerationBumpReason,
