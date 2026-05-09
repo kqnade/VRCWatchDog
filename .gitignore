@@ -1,1 +1,32 @@
 VRCTimeline/
+
+# Rust
+target/
+**/target/
+Cargo.lock.bak
+
+# Editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Node / pnpm (frontend は Phase 5 以降)
+node_modules/
+.pnpm-store/
+
+# Tauri / SvelteKit build outputs
+.svelte-kit/
+build/
+dist/
+
+# SQLite WAL/shm (テスト用 tempdir の取りこぼし対策)
+*.db-shm
+*.db-wal
+
+# Backup files
+*.bak
+
+# Local secrets
+.env
+.env.local

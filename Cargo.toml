@@ -1,0 +1,48 @@
+[workspace]
+members = ["crates/core"]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+authors = ["kqnade"]
+license = "MIT"
+repository = "https://github.com/kqnade/VRCWatchDog"
+rust-version = "1.80"
+
+[workspace.dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "fs", "io-util", "time", "signal"] }
+sqlx = { version = "0.8", default-features = false, features = ["sqlite", "runtime-tokio", "macros", "migrate", "chrono"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
+chrono-tz = { version = "0.10", default-features = false, features = ["serde", "std"] }
+iana-time-zone = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+anyhow = "1"
+notify = "7"
+notify-debouncer-mini = "0.5"
+sysinfo = { version = "0.32", default-features = false, features = ["system"] }
+tempfile = "3"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "json"] }
+sha2 = "0.10"
+blake3 = "1"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+regex = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+windows = { version = "0.58", features = ["Win32_Storage_FileSystem", "Win32_Foundation"] }
+
+[workspace.lints.rust]
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+let_underscore_future = "deny"
+dbg_macro = "warn"
+print_stdout = "warn"
+unwrap_used = "warn"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
