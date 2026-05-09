@@ -55,6 +55,10 @@ pub trait FsProbe: Send + Sync {
 
     /// `path` の `from..` バイトを読んで返す。EOF 到達まで読む。
     async fn read_from(&self, path: &Path, from: u64) -> Result<Vec<u8>>;
+
+    /// 指定ディレクトリ直下のログファイル候補を列挙する。
+    /// reconcile scan で「notify が見落としたファイル」を拾うために使う。
+    async fn list_dir(&self, dir: &Path) -> Result<Vec<PathBuf>>;
 }
 
 #[derive(Debug, Clone)]
@@ -132,6 +136,59 @@ impl<S: FsEventSource, P: FsProbe> LogWatcherActor<S, P> {
             let _ = self.handle_event(ev).await?;
         }
         Ok(())
+    }
+
+    /// reconcile scan: ディレクトリ内の全ログファイルに対して `ingest_path` を呼び、
+    /// notify が見落としたファイル / 通知漏れのサイズ進捗を catch-up する。
+    ///
+    /// 多重実行ガードあり: 既に走行中なら [`ReconcileOutcome::AlreadyRunning`] を返す。
+    pub async fn reconcile(&mut self, dir: &Path) -> Result<ReconcileOutcome> {
+        // 多重実行ガード: 走行中フラグを取って確認 → 立てる → ロック解放
+        // ロックを保持したまま `ingest_path` を呼ぶと再帰デッドロックの恐れがあるので、
+        // フラグだけ立ててロックは即座に解放する。
+        {
+            let mut guard = self.reconcile_running.lock().await;
+            if *guard {
+                debug!("reconcile already running, skipping");
+                return Ok(ReconcileOutcome::AlreadyRunning);
+            }
+            *guard = true;
+        }
+
+        // 本処理 (panic safety: catch_unwind は使わない、actor 親が supervise する)
+        let result = self.reconcile_inner(dir).await;
+
+        // フラグを必ず戻す
+        {
+            let mut guard = self.reconcile_running.lock().await;
+            *guard = false;
+        }
+
+        result
+    }
+
+    async fn reconcile_inner(&mut self, dir: &Path) -> Result<ReconcileOutcome> {
+        let paths = self.probe.list_dir(dir).await?;
+        let mut catched_up: usize = 0;
+        let mut skipped: usize = 0;
+        for path in paths {
+            match self.ingest_path(path).await? {
+                HandleOutcome::Ingested { .. } | HandleOutcome::Buffered { .. } => {
+                    catched_up += 1;
+                }
+                HandleOutcome::NoOp
+                | HandleOutcome::Removed
+                | HandleOutcome::OverflowAck
+                | HandleOutcome::Paused { .. } => {
+                    skipped += 1;
+                }
+            }
+        }
+        info!(catched_up, skipped, ?dir, "reconcile scan completed");
+        Ok(ReconcileOutcome::Completed {
+            catched_up,
+            skipped,
+        })
     }
 
     async fn ingest_path(&mut self, path: PathBuf) -> Result<HandleOutcome> {
@@ -333,6 +390,13 @@ pub enum HandleOutcome {
     Paused { backlog: i64 },
 }
 
+/// `reconcile` の結果。
+#[derive(Debug, PartialEq, Eq)]
+pub enum ReconcileOutcome {
+    Completed { catched_up: usize, skipped: usize },
+    AlreadyRunning,
+}
+
 fn hex_encode(bytes: &[u8]) -> String {
     let mut s = String::with_capacity(bytes.len() * 2);
     for b in bytes {
@@ -456,6 +520,17 @@ mod tests {
                     f.bytes[from..].to_vec()
                 })
                 .unwrap_or_default())
+        }
+
+        async fn list_dir(&self, dir: &Path) -> Result<Vec<PathBuf>> {
+            let inner = self.inner.lock().await;
+            let mut out: Vec<PathBuf> = inner
+                .keys()
+                .filter(|p| p.parent() == Some(dir) || dir.as_os_str().is_empty())
+                .cloned()
+                .collect();
+            out.sort();
+            Ok(out)
         }
     }
 
@@ -712,6 +787,71 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(row.0, "UnparsableLine");
+    }
+
+    /// 不変条件: reconcile scan が notify 見落としファイルを catch-up する。
+    /// notify が一切来ない状態で reconcile だけで履歴が完成することを確認。
+    #[tokio::test]
+    async fn reconcile_picks_up_missed_files() {
+        let (pool, _dir) = make_pool().await;
+        let probe = Arc::new(FakeFsProbe::new());
+        let dir = PathBuf::from("/logs");
+        let path1 = dir.join("output_log_2026-05-09_21-00-00.txt");
+        let path2 = dir.join("output_log_2026-05-09_22-00-00.txt");
+        let line1 = log_line("2026.05.09 21:00:00", "[Behaviour] Entering Room: A");
+        let line2 = log_line("2026.05.09 22:00:00", "[Behaviour] Entering Room: B");
+        probe.create(path1.clone(), line1.as_bytes(), 100).await;
+        probe.create(path2.clone(), line2.as_bytes(), 200).await;
+
+        let mut actor = make_actor(pool.clone(), probe.clone());
+        // notify event は一切送らず、reconcile だけで catch-up
+        let outcome = actor.reconcile(&dir).await.unwrap();
+        match outcome {
+            ReconcileOutcome::Completed { catched_up, .. } => {
+                assert_eq!(catched_up, 2, "both files should be ingested");
+            }
+            _ => panic!("expected Completed, got {outcome:?}"),
+        }
+
+        let raw_count: i64 = sqlx::query("SELECT COUNT(*) FROM raw_log_events")
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(raw_count, 2);
+        let pf_count: i64 = sqlx::query("SELECT COUNT(*) FROM processed_log_files")
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(pf_count, 2);
+    }
+
+    /// 不変条件: 同 reconcile 中に reconcile を再呼び出ししても多重実行されない。
+    /// 多重 reconcile は file_size と cursor の race を起こすので必ず 1 つに絞る。
+    #[tokio::test]
+    async fn reconcile_guard_prevents_concurrent_runs() {
+        let (pool, _dir) = make_pool().await;
+        let probe = Arc::new(FakeFsProbe::new());
+        let dir = PathBuf::from("/logs");
+        let mut actor = make_actor(pool.clone(), probe.clone());
+
+        // 走行中フラグを手動で立てる (実 reconcile を spawn する代わりに
+        // 状態だけ模倣することで、テストを決定的に保つ)
+        {
+            let mut guard = actor.reconcile_running.lock().await;
+            *guard = true;
+        }
+        let outcome = actor.reconcile(&dir).await.unwrap();
+        assert_eq!(outcome, ReconcileOutcome::AlreadyRunning);
+
+        // フラグを戻して再実行できることを確認
+        {
+            let mut guard = actor.reconcile_running.lock().await;
+            *guard = false;
+        }
+        let outcome = actor.reconcile(&dir).await.unwrap();
+        assert!(matches!(outcome, ReconcileOutcome::Completed { .. }));
     }
 
     /// 不変条件: 削除→再作成 (creation_time 変化) で generation が bump する。
