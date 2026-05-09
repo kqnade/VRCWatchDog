@@ -8,6 +8,7 @@ pub mod log_parser;
 pub mod log_watcher;
 pub mod photo;
 pub mod projector;
+pub mod settings;
 pub mod time;
 
 pub use error::{Error, Result};
