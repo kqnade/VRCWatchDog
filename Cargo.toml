@@ -10,6 +10,7 @@ repository = "https://github.com/kqnade/VRCWatchDog"
 rust-version = "1.80"
 
 [workspace.dependencies]
+async-trait = "0.1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "fs", "io-util", "time", "signal"] }
 sqlx = { version = "0.8", default-features = false, features = ["sqlite", "runtime-tokio", "macros", "migrate", "chrono"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }

@@ -9,6 +9,7 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
+async-trait.workspace = true
 tokio.workspace = true
 sqlx.workspace = true
 chrono.workspace = true
