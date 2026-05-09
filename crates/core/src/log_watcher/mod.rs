@@ -9,8 +9,12 @@ mod actor;
 mod file_identity;
 mod fs_event;
 mod line_buffer;
+mod notify_source;
 
-pub use actor::{FsProbe, HandleOutcome, LogWatcherActor, ProbedFile, WatcherConfig};
+pub use actor::{
+    FsProbe, HandleOutcome, LogWatcherActor, ProbedFile, ReconcileOutcome, WatcherConfig,
+};
+pub use notify_source::{NotifyEventSource, RealFsProbe};
 
 pub use file_identity::{
     compute_file_identity_hash, detect_bump, CurrentFileState, FileIdentity, GenerationBumpReason,
