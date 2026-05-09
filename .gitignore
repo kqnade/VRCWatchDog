@@ -1,3 +1,4 @@
+# インスパイア元の C# 実装ディレクトリ。混入防止のため ignore (git 管理外)
 VRCTimeline/
 
 # Rust

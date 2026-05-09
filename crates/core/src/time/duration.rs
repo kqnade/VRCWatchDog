@@ -1,8 +1,7 @@
 //! Duration formatter.
 //!
-//! 既存 C# 版 (Issue #15) は `TimeSpan.ToString("hh\\:mm\\:ss")` を使っていたため、
-//! 24 時間以上のセッションが `01:30:00` (実際 25:30:00) のように wrap して表示されていた。
-//! Rust 版では `{total_hours:02}:{m:02}:{s:02}` で必ず total hours を出す。
+//! `HH:MM:SS` 形式。`HH` は通算時数で、24 時間以上のセッションでも wrap しない
+//! (`{total_hours:02}:{m:02}:{s:02}`)。
 
 use chrono::Duration;
 
@@ -54,7 +53,7 @@ mod tests {
 
     #[test]
     fn formats_over_24h_without_wrap() {
-        // Issue #15: 24 時間以上で hh:mm:ss が wrap しないこと。
+        // 24 時間以上のセッションで hh:mm:ss が wrap しないこと。
         assert_eq!(
             format_duration_hms(Duration::seconds(25 * 3600 + 30 * 60)),
             "25:30:00"

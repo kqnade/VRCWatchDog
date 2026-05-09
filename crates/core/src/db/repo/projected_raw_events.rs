@@ -61,8 +61,8 @@ pub async fn mark_failed(tx: &mut Transaction<'_, Sqlite>, raw_id: i64, error: &
 }
 
 /// projection 対象 (status = 'Pending') の raw を取り出す。
-/// Codex v6 の指摘通り、 順序は `(log_sequence_key, generation, byte_offset)` で
-/// reconcile が古いファイルを後から拾った場合でも時系列を保つ。
+/// 順序は `(log_sequence_key, generation, byte_offset)` で、reconcile が古い
+/// ファイルを後から拾った場合でも時系列を保つ。
 #[derive(Debug, Clone)]
 pub struct PendingRaw {
     pub raw_event_id: i64,

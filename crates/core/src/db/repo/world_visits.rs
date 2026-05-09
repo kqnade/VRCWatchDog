@@ -153,7 +153,7 @@ pub async fn resolve_pending_with_world(
 
 /// 既存 visit を `Resolved` であっても新たな `Joining` で「上書き」する場合の処理。
 /// 入力された `world_id`/`instance_id` が現在値と一致すれば idempotent (no-op)、
-/// 異なれば `Conflict` 状態に遷移する (Codex v6 の新規 Joining different ルール)。
+/// 異なれば `Conflict` 状態に遷移する。
 pub async fn handle_late_or_repeat_joining(
     tx: &mut Transaction<'_, Sqlite>,
     visit_id: i64,

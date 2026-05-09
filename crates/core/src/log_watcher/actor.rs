@@ -592,7 +592,6 @@ mod tests {
     }
 
     /// 不変条件: 不完全行 (改行未到達) は raw に書かれず、次回 ingest で完成する。
-    /// Issue #2 の中核ケース。
     #[tokio::test]
     async fn incomplete_line_buffered_until_complete() {
         let (pool, _dir) = make_pool().await;
@@ -668,7 +667,6 @@ mod tests {
 
     /// 不変条件: actor 再起動 (= crash 模擬) しても、cursor が DB に永続化されているため
     /// 同 raw を再 insert しない。再起動後に追記された行のみ取り込む。
-    /// Issue #1 の中核ケース。
     #[tokio::test]
     async fn restart_after_crash_does_not_duplicate_persisted_raw() {
         let (pool, _dir) = make_pool().await;

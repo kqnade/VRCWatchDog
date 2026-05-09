@@ -1,9 +1,9 @@
 //! 不完全行を次回 ingest まで保持する byte buffer。
 //!
-//! Codex review の指摘 (Issue #2 修正): `BufReader::read_line` は EOF で
-//! 改行未到達の不完全行を返してしまう。本実装は `read_until(b'\n')` 相当の
-//! セマンティクスをサーフェスし、**改行が確認できた行のみ**を呼び出し側に
-//! 渡す。残りバイトは buffer に保持し、次回追加 read で結合する。
+//! `BufReader::read_line` は EOF で改行未到達の不完全行を返してしまうため
+//! ログ末尾を取りこぼす。本実装は `read_until(b'\n')` 相当のセマンティクスを
+//! サーフェスし、**改行が確認できた行のみ**を呼び出し側に渡す。
+//! 残りバイトは buffer に保持し、次回追加 read で結合する。
 
 /// 「完了行」(末尾が `\n` で終わる行) のみを切り出す byte buffer。
 ///
@@ -97,7 +97,7 @@ mod tests {
 
     #[test]
     fn incomplete_trailing_line_held_until_next_extend() {
-        // Issue #2 の中核ケース: EOF で改行未到達 → 次回 read で完成
+        // EOF で改行未到達 → 次回 read で完成
         let mut buf = LineBuffer::new();
         buf.extend_from_slice(b"hello\nincomp");
         let lines = buf.take_completed_lines();
