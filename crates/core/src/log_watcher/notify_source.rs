@@ -171,9 +171,10 @@ fn probe_blocking(path: &Path) -> Result<Option<super::ProbedFile>> {
         Err(e) => return Err(e.into()),
     };
     let meta = file.metadata()?;
-    // windows crate 0.58+: HANDLE は *mut c_void タプル構造体。
-    // std::os::windows::io::AsRawHandle::as_raw_handle() は RawHandle (= *mut c_void) を返す。
-    let handle = HANDLE(file.as_raw_handle() as *mut core::ffi::c_void);
+    // windows crate 0.58+: HANDLE(pub *mut c_void)。
+    // std::os::windows::io::AsRawHandle::as_raw_handle() は RawHandle (= *mut c_void) を返すので
+    // そのまま渡せる (as キャストは clippy::unnecessary_cast 違反になる)。
+    let handle = HANDLE(file.as_raw_handle());
     let mut info = BY_HANDLE_FILE_INFORMATION::default();
     // SAFETY: handle は直前で得た有効なファイルハンドル、info は valid な &mut。
     // FFI には *mut を明示してから渡す。
