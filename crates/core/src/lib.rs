@@ -6,6 +6,7 @@ pub mod db;
 pub mod error;
 pub mod log_parser;
 pub mod log_watcher;
+pub mod projector;
 pub mod time;
 
 pub use error::{Error, Result};
