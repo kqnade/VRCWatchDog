@@ -171,10 +171,14 @@ fn probe_blocking(path: &Path) -> Result<Option<super::ProbedFile>> {
         Err(e) => return Err(e.into()),
     };
     let meta = file.metadata()?;
-    let handle = HANDLE(file.as_raw_handle() as isize);
+    // windows crate 0.58+: HANDLE は *mut c_void タプル構造体。
+    // std::os::windows::io::AsRawHandle::as_raw_handle() は RawHandle (= *mut c_void) を返す。
+    let handle = HANDLE(file.as_raw_handle() as *mut core::ffi::c_void);
     let mut info = BY_HANDLE_FILE_INFORMATION::default();
-    // SAFETY: handle はすぐ上で得たもの、info は valid な可変参照。
-    unsafe { GetFileInformationByHandle(handle, &mut info) }
+    // SAFETY: handle は直前で得た有効なファイルハンドル、info は valid な &mut。
+    // FFI には *mut を明示してから渡す。
+    let info_ptr: *mut BY_HANDLE_FILE_INFORMATION = &mut info;
+    unsafe { GetFileInformationByHandle(handle, info_ptr) }
         .map_err(|e| crate::Error::Config(format!("GetFileInformationByHandle: {e}")))?;
     let creation_time = ((info.ftCreationTime.dwHighDateTime as i64) << 32)
         | (info.ftCreationTime.dwLowDateTime as i64);
