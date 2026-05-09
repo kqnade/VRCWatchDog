@@ -1,8 +1,9 @@
-//! データベース接続・マイグレーション・write actor。
+//! データベース接続・マイグレーション・repository。
 //!
-//! 全 write 操作は [`write_actor`] を経由してシリアル化する
-//! (WAL モードでも SQLite は single writer のため、busy エラー回避目的)。
+//! repository 関数群は `&mut Transaction<'_, Sqlite>` を受け取り、tx 境界は
+//! 呼び出し側で制御する設計。Phase 4a 以降で write actor から束ねて利用する。
 
 mod connection;
+pub mod repo;
 
 pub use connection::{open, Pool};
