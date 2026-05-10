@@ -1,9 +1,9 @@
-//! VRCWatchDog Tauri shell。Phase 5d: 10-step bootstrap (1, 2, 3, 4, 6, 8, 9, 10) を wire。
+//! VRCWatchDog Tauri shell。Phase 5e: 10-step bootstrap + log_watcher + projector +
+//! health-status emitter まで wire 済。
 //!
-//! - `lib.rs` を分けてあるのは Windows-only の Resource 埋め込み (build.rs) を bin と
-//!   分離するため、また将来 mobile (`tauri::mobile_entry_point`) を追加するときに
-//!   lib 側で再利用するため。
-//! - 残り step 5/7/10-tray は actor 実装と一緒に積む。
+//! `lib.rs` を分けてあるのは Windows-only の Resource 埋め込み (build.rs) を bin と
+//! 分離するため、また将来 mobile (`tauri::mobile_entry_point`) を追加するときに lib
+//! 側で再利用するため。
 
 #![cfg_attr(
     all(not(debug_assertions), target_os = "windows"),
@@ -15,30 +15,36 @@ pub mod commands;
 pub mod paths;
 pub mod state;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use tauri::{Emitter, Manager};
+use sqlx::SqlitePool;
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::task::JoinSet;
 use tracing_subscriber::EnvFilter;
+use vrcwatchdog_core::health::collect_health;
 use vrcwatchdog_core::ipc::events::{names, OneDriveWarning, SettingsCorruptWarning};
 use vrcwatchdog_core::log_watcher::{
     LogWatcherActor, NotifyEventSource, RealFsProbe, WatcherConfig,
 };
 use vrcwatchdog_core::projector::project_batch;
+use vrcwatchdog_core::settings::Settings;
 
 use crate::bootstrap::Bootstrap;
 use crate::paths::{default_vrchat_log_dir, AppPaths};
 use crate::state::AppState;
 
 /// projector batch の最大処理件数 (1 イテレーション)。
-/// 値は plan §1 の backpressure 設計を踏まえつつ tail.rs と揃える。
 const PROJECTOR_BATCH_SIZE: i64 = 500;
 
 /// projector の poll 間隔。raw_log_events に push があってから projection されるまでの
 /// 最大遅延の目安。
 const PROJECTOR_POLL_INTERVAL: Duration = Duration::from_millis(500);
+
+/// health-status event の emit 間隔。plan §1 では「短い間隔 (1〜5 秒) で frontend に
+/// push する想定」。
+const HEALTH_EMIT_INTERVAL: Duration = Duration::from_secs(2);
 
 /// Tauri アプリを起動する。
 ///
@@ -46,9 +52,7 @@ const PROJECTOR_POLL_INTERVAL: Duration = Duration::from_millis(500);
 pub fn run() {
     init_tracing();
 
-    // Step 3-6 までを async で実行 (DB open + settings load + writer spawn)。
-    // tauri::async_runtime は内部 tokio runtime を使う。block_on 終了後も spawn 済み
-    // task は引き続き動く (settings_writer の actor loop 等)。
+    // Step 3-6: settings load + DB open + SettingsWriter spawn (sync portion of bootstrap)
     let paths = match AppPaths::from_env() {
         Ok(p) => p,
         Err(e) => fatal("could not resolve app paths", e),
@@ -63,14 +67,7 @@ pub fn run() {
         Err(e) => fatal("bootstrap failed", e),
     };
 
-    // Step 7 (partial): log_watcher actor + projector loop を spawn。
-    // JoinSet をローカルに保持し、Tauri Builder.run() が抜けた直後に drop すること
-    // で全 task を abort する。state には積まないので、Bootstrap::new の同期テストは
-    // この spawn の影響を受けない。
-    let bg_tasks = tauri::async_runtime::block_on(spawn_background_tasks(&bootstrap.state));
-
-    // Step 2: single-instance (最早登録)。2 番目に起動された process は plugin が
-    // 起動済みインスタンスにシグナルを送り、自身は早期終了する。
+    // Plugins
     let single_instance = tauri_plugin_single_instance::init(|app, _args, _cwd| {
         if let Some(window) = app.get_webview_window("main") {
             let _ = window.show();
@@ -78,23 +75,18 @@ pub fn run() {
             let _ = window.unminimize();
         }
     });
-
-    // Step 8: autostart toggle plugin。enable/disable は明示操作 (settings command)
-    // からだけ呼ばせる (plan §4 起動時自動 write 禁止)。`--startup` 引数を autostart
-    // 経由起動時に渡し、後段で window 初期可視性の判定に使う。
     let autostart = tauri_plugin_autostart::init(
         tauri_plugin_autostart::MacosLauncher::LaunchAgent,
         Some(vec!["--startup"]),
     );
-
-    // Step 9: window-state を保存/復元。
     let window_state = tauri_plugin_window_state::Builder::default().build();
-
-    // Rust 側で `app.opener().open_path()` を使うために register。capability 側で
-    // opener:* perm は付与しない (= JS から `plugin:opener|open_path` は呼べない)。
+    // Rust 側 `app.opener().open_path()` 専用。capability では opener:* perm を付けない。
     let opener = tauri_plugin_opener::init();
 
-    tauri::Builder::default()
+    // Builder.build() を経由することで、setup() の外でも AppHandle / AppState に
+    // アクセスできる。これにより background task spawn を build() 後に行えて、
+    // health emitter 等で AppHandle が必要なケースに対応できる。
+    let app = tauri::Builder::default()
         .plugin(single_instance)
         .plugin(window_state)
         .plugin(autostart)
@@ -107,58 +99,88 @@ pub fn run() {
             commands::save_settings,
         ])
         .setup(|app| {
-            // Bootstrap で検出した警告をここで emit する (event listener が貼られた
-            // 直後に届くよう setup 内で投げる)。
-            let state: tauri::State<'_, AppState> = app.state();
-
-            if let Some(info) = &state.settings_corrupt {
-                let payload = SettingsCorruptWarning {
-                    backup_path: info.backup_path.clone(),
-                    reason: info.reason.clone(),
-                };
-                if let Err(e) = app.emit(names::SETTINGS_CORRUPT_WARNING, payload) {
-                    tracing::warn!(error = %e, "failed to emit settings corrupt warning");
-                }
-            }
-
-            if let Some(risk) = &state.db_sync_risk {
-                let payload = OneDriveWarning {
-                    db_path: risk.db_path.clone(),
-                    detected_indicator: risk.indicator.clone(),
-                };
-                if let Err(e) = app.emit(names::ONEDRIVE_WARNING, payload) {
-                    tracing::warn!(error = %e, "failed to emit onedrive warning");
-                }
-            }
-
-            // Step 10 (--startup の hidden 化) は Phase 5e で system tray 一緒に。
-            // 現状は tauri.conf.json の visible:true をそのまま使う。
+            emit_deferred_warnings(app);
+            // Step 10 (--startup の hidden 化) は system tray と一緒に Phase 5e+ で。
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("tauri runtime failed to start");
+        .build(tauri::generate_context!())
+        .expect("tauri build failed");
 
-    // Builder.run() から抜けたら (= app exit) 背景タスクを abort。
-    // JoinSet::drop が abort_all を呼ぶので明示は不要だが、意図を明示するためにも書く。
+    // Step 7: log_watcher / projector / health emitter を background で spawn。
+    // build() 後だと AppHandle が取れるので health emitter に渡せる。
+    // State 借用を run() 前に解放するため、scope で必要な値だけ owned で取り出す。
+    let (handle, pool, settings_snapshot, db_path) = {
+        let state: tauri::State<'_, AppState> = app.state();
+        (
+            app.handle().clone(),
+            state.db_pool.clone(),
+            state.settings.snapshot(),
+            state.paths.db_path.clone(),
+        )
+    };
+    let bg_tasks = tauri::async_runtime::block_on(spawn_background_tasks(
+        handle,
+        pool,
+        settings_snapshot,
+        db_path,
+    ));
+
+    // app.run() は self を消費して event loop 起動。Exit event で抜ける。
+    // 抜けた後に bg_tasks を drop して JoinSet が abort_all を呼ぶ。
+    app.run(|_handle, _event| {});
     drop(bg_tasks);
 }
 
-/// log_watcher actor + projector loop を spawn して JoinSet として返す。
+/// `Bootstrap` で検出済みの起動時警告を emit する (best-effort)。
 ///
-/// - log_watcher は `settings.log_directory` を最優先、未設定なら `default_vrchat_log_dir()`
-///   を fallback として使う。どちらの path も `is_dir()` が false なら spawn しない (warn log)。
-/// - projector loop は常時 spawn。raw_log_events が無くてもループは回り続け (no-op)、
-///   後から log_watcher が事象を流し込んだ時点で processing が始まる。
-async fn spawn_background_tasks(state: &AppState) -> JoinSet<()> {
+/// frontend 側 listener が onMount 後に attach される一方、本関数は setup()
+/// (= webview load 前) で呼ばれるため、初回 emit は取りこぼされる可能性がある。
+/// Phase 5e 後続で「初期警告を再取得する command」を追加して取り回しを改善する。
+fn emit_deferred_warnings(app: &tauri::App) {
+    let state: tauri::State<'_, AppState> = app.state();
+
+    if let Some(info) = &state.settings_corrupt {
+        let payload = SettingsCorruptWarning {
+            backup_path: info.backup_path.clone(),
+            reason: info.reason.clone(),
+        };
+        if let Err(e) = app.emit(names::SETTINGS_CORRUPT_WARNING, payload) {
+            tracing::warn!(error = %e, "failed to emit settings corrupt warning");
+        }
+    }
+
+    if let Some(risk) = &state.db_sync_risk {
+        let payload = OneDriveWarning {
+            db_path: risk.db_path.clone(),
+            detected_indicator: risk.indicator.clone(),
+        };
+        if let Err(e) = app.emit(names::ONEDRIVE_WARNING, payload) {
+            tracing::warn!(error = %e, "failed to emit onedrive warning");
+        }
+    }
+}
+
+/// log_watcher actor + projector loop + health emitter を spawn。
+///
+/// 戻り値の `JoinSet` を呼び出し側がローカルで持ち、`app.run()` 完了後に drop する
+/// ことで全 task を abort する。
+async fn spawn_background_tasks(
+    app: AppHandle,
+    pool: SqlitePool,
+    settings_snapshot: Settings,
+    db_path: PathBuf,
+) -> JoinSet<()> {
     let mut tasks = JoinSet::new();
 
-    // log_watcher: 有効な log_dir があれば spawn
-    let configured = state.settings.snapshot().log_directory.clone();
-    let effective_log_dir = configured.or_else(default_vrchat_log_dir);
-
+    // log_watcher: 有効な log_dir があれば spawn。settings の値が最優先、
+    // 未設定なら VRChat の標準パスに fallback。どちらも is_dir() が false なら skip。
+    let effective_log_dir = settings_snapshot
+        .log_directory
+        .clone()
+        .or_else(default_vrchat_log_dir);
     match effective_log_dir.as_deref() {
         Some(dir) if dir.is_dir() => {
-            spawn_log_watcher(&mut tasks, state.db_pool.clone(), dir).await;
+            spawn_log_watcher(&mut tasks, pool.clone(), dir).await;
         }
         Some(dir) => {
             tracing::warn!(
@@ -174,11 +196,12 @@ async fn spawn_background_tasks(state: &AppState) -> JoinSet<()> {
         }
     }
 
-    // projector: 常時 spawn
-    let pool = state.db_pool.clone();
+    // projector: 常時 spawn。raw が無くても loop は回り続け (no-op)、
+    // 後から log_watcher が事象を流し込んだ時点で processing が始まる。
+    let pool_proj = pool.clone();
     tasks.spawn(async move {
         loop {
-            match project_batch(&pool, PROJECTOR_BATCH_SIZE).await {
+            match project_batch(&pool_proj, PROJECTOR_BATCH_SIZE).await {
                 Ok(r) if r.processed > 0 => {
                     tracing::info!(
                         processed = r.processed,
@@ -195,12 +218,33 @@ async fn spawn_background_tasks(state: &AppState) -> JoinSet<()> {
         }
     });
 
+    // health emitter: 2 秒ごとに collect_health → emit。
+    // tokio::time::interval は first tick が即返るので、起動直後に 1 発投げて
+    // frontend の "loading..." 表示を素早く解消する。
+    let pool_health = pool;
+    let handle_health = app;
+    let db_path_health = db_path;
+    tasks.spawn(async move {
+        let mut ticker = tokio::time::interval(HEALTH_EMIT_INTERVAL);
+        loop {
+            ticker.tick().await;
+            match collect_health(&pool_health, &db_path_health).await {
+                Ok(payload) => {
+                    if let Err(e) = handle_health.emit(names::HEALTH_STATUS, payload) {
+                        tracing::warn!(error = %e, "failed to emit health status");
+                    }
+                }
+                Err(e) => tracing::warn!(error = %e, "failed to collect health"),
+            }
+        }
+    });
+
     tasks
 }
 
 /// `spawn_log_watcher` 内部分け。エラー時は warn log だけで吸収し、
 /// projector など他の background task の起動を阻害しない。
-async fn spawn_log_watcher(tasks: &mut JoinSet<()>, pool: sqlx::SqlitePool, log_dir: &Path) {
+async fn spawn_log_watcher(tasks: &mut JoinSet<()>, pool: SqlitePool, log_dir: &Path) {
     let probe = Arc::new(RealFsProbe::new());
     let source = match NotifyEventSource::new(log_dir) {
         Ok(s) => s,
