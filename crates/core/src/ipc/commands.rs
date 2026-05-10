@@ -24,6 +24,7 @@ use std::path::{Path, PathBuf};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::db::repo::notification_records::NotificationRecord;
 use crate::db::repo::photo_records::PhotoRecord;
 use crate::db::repo::world_visits::VisitWithCounts;
 use crate::ipc::events::{OneDriveWarning, SettingsCorruptWarning};
@@ -82,6 +83,34 @@ impl From<PhotoRecord> for PhotoRecordDto {
     /// 通常は `PhotoRecordDto::from_record(record, Some(thumb_dir))` を使うべき。
     fn from(r: PhotoRecord) -> Self {
         Self::from_record(r, None)
+    }
+}
+
+/// `list_recent_notifications` command の戻り値要素。/notifications 画面用。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotificationDto {
+    pub id: i64,
+    pub received_naive_local: String,
+    pub received_utc: DateTime<Utc>,
+    pub sender_name: String,
+    pub notification_type: String,
+    pub world_visit_id: Option<i64>,
+}
+
+impl From<NotificationRecord> for NotificationDto {
+    fn from(r: NotificationRecord) -> Self {
+        Self {
+            id: r.id,
+            received_naive_local: r
+                .received_naive_local
+                .format("%Y-%m-%d %H:%M:%S")
+                .to_string(),
+            received_utc: r.received_utc,
+            sender_name: r.sender_name,
+            notification_type: r.notification_type,
+            world_visit_id: r.world_visit_id,
+        }
     }
 }
 

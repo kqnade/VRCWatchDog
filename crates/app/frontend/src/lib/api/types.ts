@@ -67,6 +67,16 @@ export interface PhotoRecord {
   worldVisitId: number | null;
 }
 
+// `list_recent_notifications` の戻り値要素。/notifications 画面で表示する。
+export interface Notification {
+  id: number;
+  receivedNaiveLocal: string;
+  receivedUtc: string;
+  senderName: string;
+  notificationType: string;
+  worldVisitId: number | null;
+}
+
 // `list_recent_visits` の戻り値要素。activity_history 画面で表示する。
 //
 // duration は backend で format_duration_hms に通した "HH:MM:SS" 文字列、
