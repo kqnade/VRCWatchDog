@@ -145,6 +145,31 @@ pub fn run() {
             commands::list_recent_videos,
         ])
         .setup(|app| {
+            // Phase 6 fix: tauri.conf.json の `$LOCALAPPDATA/...` glob は Tauri 2 で
+            // 展開されず、asset:// 経由の thumb 読み込みが全て scope reject される。
+            // 実 thumb_dir は AppPaths が解決済みなので、runtime の AssetProtocolScope
+            // に絶対パスで `allow_directory(recursive=true)` する。
+            // (`tauri.conf.json` の static scope は残しておくが実効性は無し。将来掃除可)
+            {
+                let state: tauri::State<'_, AppState> = app.state();
+                let scope = app.asset_protocol_scope();
+                if let Err(e) = scope.allow_directory(&state.paths.thumb_dir, true) {
+                    tracing::warn!(error = %e, dir = ?state.paths.thumb_dir,
+                        "asset scope: failed to allow thumb_dir");
+                }
+                // photo grid は asset:// で thumb のみ表示する設計だが、
+                // /history で原本を直接 <img> 表示したくなったとき用に photo_directory も
+                // 許可しておく (現状は使わない)。
+                if let Some(photo_dir) = state.settings.snapshot().photo_directory.as_deref() {
+                    if photo_dir.is_dir() {
+                        if let Err(e) = scope.allow_directory(photo_dir, true) {
+                            tracing::warn!(error = %e, dir = ?photo_dir,
+                                "asset scope: failed to allow photo_directory");
+                        }
+                    }
+                }
+            }
+
             // Phase E: system tray + close-to-tray + --startup hidden launch。
             // 1. tray icon + Show/Quit menu を作成
             // 2. main window の close → hide に置換
