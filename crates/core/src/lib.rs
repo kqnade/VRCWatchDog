@@ -9,6 +9,7 @@ pub mod ipc;
 pub mod log_parser;
 pub mod log_watcher;
 pub mod photo;
+pub mod photo_scanner;
 pub mod projector;
 pub mod settings;
 pub mod time;
