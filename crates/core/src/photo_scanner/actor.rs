@@ -15,7 +15,7 @@
 //! - **PathRemoved は何もしない**: photo_records は履歴目的なので、ファイルが消えても
 //!   row は残す。UI で 404 になったら別途「再スキャン」操作を提供する想定。
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use chrono_tz::Tz;
 use sqlx::SqlitePool;
@@ -91,16 +91,25 @@ impl<S: FsEventSource> PhotoScannerActor<S> {
         Ok(())
     }
 
-    /// dir を list して、画像拡張子のものすべてを 1 transaction で ingest する。
+    /// dir を **再帰的に** list して、画像拡張子のものすべてを 1 transaction で ingest する。
     ///
     /// 起動時 catch-up + notify overflow 後の rescan で使う。
+    /// VRChat デフォルトの保存先は `Pictures/VRChat/YYYY-MM/VRChat_*.png` のように
+    /// 月別サブディレクトリで構成されているため、ユーザーが指定する photo_directory は
+    /// 親ディレクトリで、写真本体は 1 段下にある。再帰スキャンが必須。
     /// 数百〜数千件になりうるが、1 tx + visits 1 回 load なので overhead は最小。
     pub async fn reconcile(&mut self, dir: &Path) -> Result<ReconcileOutcome> {
-        // Step 1: dir を list して画像のみ集める
-        let mut entries = match tokio::fs::read_dir(dir).await {
-            Ok(e) => e,
+        // Step 1: root の存在チェック (NotFound は設定ミス / 初回未起動 VRChat。silent skip)。
+        match tokio::fs::metadata(dir).await {
+            Ok(m) if m.is_dir() => {}
+            Ok(_) => {
+                return Ok(ReconcileOutcome {
+                    considered: 0,
+                    recorded: 0,
+                    skipped: 0,
+                });
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                // dir が無いのは設定ミスや初回未起動の VRChat。skip。
                 return Ok(ReconcileOutcome {
                     considered: 0,
                     recorded: 0,
@@ -108,14 +117,10 @@ impl<S: FsEventSource> PhotoScannerActor<S> {
                 });
             }
             Err(e) => return Err(e.into()),
-        };
-        let mut paths = Vec::new();
-        while let Some(entry) = entries.next_entry().await? {
-            let path = entry.path();
-            if has_image_extension(&path) {
-                paths.push(path);
-            }
         }
+
+        // Step 2: 再帰スキャンで画像のみ集める
+        let paths = collect_image_files_recursive(dir).await?;
         if paths.is_empty() {
             return Ok(ReconcileOutcome {
                 considered: 0,
@@ -124,7 +129,7 @@ impl<S: FsEventSource> PhotoScannerActor<S> {
             });
         }
 
-        // Step 2: 1 tx で visits 1 回 load + 全件 ingest
+        // Step 3: 1 tx で visits 1 回 load + 全件 ingest
         let mut tx = self.pool.begin().await?;
         let visits = load_world_visit_ranges(&mut tx).await?;
         let mut recorded = 0;
@@ -152,6 +157,46 @@ impl<S: FsEventSource> PhotoScannerActor<S> {
         tx.commit().await?;
         Ok(HandleOutcome::Ingest(outcome))
     }
+}
+
+/// `root` 以下の image ファイルを再帰収集する (BFS)。
+///
+/// VRChat デフォルトの `Pictures/VRChat/YYYY-MM/*.png` 構造に対応するため、
+/// reconcile からは root + サブディレクトリ全部を 1 回で list する必要がある。
+///
+/// 動作:
+/// - `tokio::fs::read_dir` をスタックで回す (再帰呼び出しは避けて深さ無制限で安全)。
+/// - 隠しディレクトリ (名前が `.` で始まる) はスキップ — `.thumbnails`, `.trash`,
+///   `.git` 等のメタデータが混入しない。
+/// - サブ dir 単位の NotFound (途中で消えた) は continue で吸収、loop 全体は止めない。
+async fn collect_image_files_recursive(root: &Path) -> Result<Vec<PathBuf>> {
+    let mut out = Vec::new();
+    let mut stack: Vec<PathBuf> = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let mut entries = match tokio::fs::read_dir(&dir).await {
+            Ok(e) => e,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(e.into()),
+        };
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                if name.starts_with('.') {
+                    continue;
+                }
+            }
+            let ft = match entry.file_type().await {
+                Ok(ft) => ft,
+                Err(_) => continue,
+            };
+            if ft.is_dir() {
+                stack.push(path);
+            } else if ft.is_file() && has_image_extension(&path) {
+                out.push(path);
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// `.png` / `.jpg` / `.jpeg` (case-insensitive) のいずれか。
@@ -353,6 +398,50 @@ mod tests {
             outcome.considered, 0,
             "存在しない dir では panic せず空 outcome を返す"
         );
+    }
+
+    #[tokio::test]
+    async fn reconcile_walks_into_subdirectories_to_find_photos() {
+        // VRChat デフォルトの `Pictures/VRChat/YYYY-MM/VRChat_*.png` 構造を再現する。
+        // root 直下にファイルは置かず、月別サブディレクトリに配置する。
+        // Arrange
+        let (pool, _db_dir, photo_dir) = fresh_setup().await;
+        let month = photo_dir.path().join("2025-05");
+        std::fs::create_dir(&month).unwrap();
+        let _ = write_photo(&month, "VRChat_2026-05-10_12-34-56_1920x1080.png");
+        let (source, _tx) = FakeFsEventSource::new();
+        let mut actor = PhotoScannerActor::new(pool.clone(), source, config());
+
+        // Act
+        let outcome = actor.reconcile(photo_dir.path()).await.unwrap();
+
+        // Assert: 再帰スキャンでサブディレクトリ内の 1 件を拾う
+        assert_eq!(outcome.considered, 1);
+        assert_eq!(outcome.recorded, 1);
+        assert_eq!(count_photos(&pool).await, 1);
+    }
+
+    #[tokio::test]
+    async fn reconcile_skips_hidden_directories_like_dotthumbnails() {
+        // `.thumbnails` のような隠しディレクトリは VRChat 以外のツール (Synology Photos /
+        // KDE 等) が作るメタデータ。混入させないことを保証する。
+        // Arrange
+        let (pool, _db_dir, photo_dir) = fresh_setup().await;
+        let hidden = photo_dir.path().join(".thumbnails");
+        std::fs::create_dir(&hidden).unwrap();
+        let _ = write_photo(&hidden, "VRChat_2026-05-10_12-34-56_1920x1080.png");
+        let (source, _tx) = FakeFsEventSource::new();
+        let mut actor = PhotoScannerActor::new(pool.clone(), source, config());
+
+        // Act
+        let outcome = actor.reconcile(photo_dir.path()).await.unwrap();
+
+        // Assert: 隠し dir 配下は無視
+        assert_eq!(
+            outcome.considered, 0,
+            "隠しディレクトリ配下は scan 対象外"
+        );
+        assert_eq!(count_photos(&pool).await, 0);
     }
 
     #[tokio::test]

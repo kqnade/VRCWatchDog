@@ -32,8 +32,12 @@ pub struct NotifyPhotoSource {
 }
 
 impl NotifyPhotoSource {
-    /// 指定 `dir` を非再帰 watch して、debounced 後のファイル変化を `FsEvent` 列に
+    /// 指定 `dir` を **再帰 watch** して、debounced 後のファイル変化を `FsEvent` 列に
     /// 流すソースを返す。
+    ///
+    /// VRChat デフォルトでは `Pictures/VRChat/YYYY-MM/` のように月別サブディレクトリに
+    /// 写真を保存するため、root だけ watch しても新規撮影が拾えない。`Recursive` は
+    /// notify が新規サブ dir も自動で watch 対象に加えるので、月またぎでも追従する。
     pub fn new(dir: &Path) -> Result<Self> {
         let (tx, rx) = mpsc::channel::<FsEvent>(256);
         let tx_for_cb = tx.clone();
@@ -59,7 +63,7 @@ impl NotifyPhotoSource {
 
         debouncer
             .watcher()
-            .watch(dir, RecursiveMode::NonRecursive)
+            .watch(dir, RecursiveMode::Recursive)
             .map_err(|e| crate::Error::Config(format!("watcher.watch({}): {e}", dir.display())))?;
 
         // 元の sender は不要 (callback が clone を保持)。drop しないと receiver が
