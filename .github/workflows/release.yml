@@ -77,9 +77,10 @@ jobs:
       - name: upload installer to release
         uses: softprops/action-gh-release@v2
         with:
+          # NSIS bundle は `*-setup.exe` の 1 ファイルのみ。`.nsis.zip` は updater
+          # 用 artifact で、updater を有効にしてないと出ないので glob しない。
           files: |
             target/release/bundle/nsis/*-setup.exe
-            target/release/bundle/nsis/*.nsis.zip
           generate_release_notes: true
           fail_on_unmatched_files: true
           draft: false
