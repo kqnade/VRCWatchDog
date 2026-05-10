@@ -127,6 +127,30 @@ pub async fn list_recent_photos(
         .collect())
 }
 
+/// 指定 visit に紐づく photo を `taken_utc` 降順で最大 `limit` 件返す。
+/// /history の visit 詳細パネルでサムネ表示するために使う。
+#[tauri::command]
+pub async fn list_photos_for_visit(
+    visit_id: i64,
+    limit: i64,
+    state: State<'_, AppState>,
+) -> Result<Vec<PhotoRecordDto>, String> {
+    let mut tx = state
+        .db_pool
+        .begin()
+        .await
+        .map_err(|e| format!("begin tx: {e}"))?;
+    let rows = photo_records::list_for_visit(&mut tx, visit_id, limit)
+        .await
+        .map_err(|e| e.to_string())?;
+    tx.commit().await.map_err(|e| format!("commit tx: {e}"))?;
+    let thumb_dir = state.paths.thumb_dir.as_path();
+    Ok(rows
+        .into_iter()
+        .map(|r| PhotoRecordDto::from_record(r, Some(thumb_dir)))
+        .collect())
+}
+
 /// 直近の visit を `joined_utc` 降順で最大 `limit` 件、photo_count 付きで返す。
 /// activity_history 画面用。
 #[tauri::command]

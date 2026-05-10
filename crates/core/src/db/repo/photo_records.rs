@@ -34,10 +34,13 @@ pub struct PhotoRecordInput {
     pub world_visit_id: Option<i64>,
 }
 
-/// `list_recent` の戻り値。photo_grid に必要な最小フィールド。
+/// `list_recent` / `fetch_by_id` の戻り値。photo_grid に必要な最小フィールド。
 ///
 /// EXIF tz の詳細 (offset/resolution/tz_source/confidence) は UI で要らないので省く。
 /// 必要になったら別 read 関数を増やす。
+///
+/// `world_name` は `world_visits` を LEFT JOIN した非正規化フィールド (photo_grid /
+/// /history のリンク UI で必須)。`world_visit_id` が NULL なら同じく NULL。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PhotoRecord {
     pub id: i64,
@@ -47,6 +50,7 @@ pub struct PhotoRecord {
     pub taken_utc: DateTime<Utc>,
     pub thumb_sha: Option<String>,
     pub world_visit_id: Option<i64>,
+    pub world_name: Option<String>,
 }
 
 /// 1 件 insert する。`file_path` UNIQUE で idempotent: 同 path の既存行があれば
@@ -101,11 +105,13 @@ pub async fn list_recent(tx: &mut Transaction<'_, Sqlite>, limit: i64) -> Result
     }
 
     let rows = sqlx::query(
-        "SELECT id, file_path, file_name,
-                taken_naive_local, taken_utc,
-                thumb_sha, world_visit_id
-         FROM photo_records
-         ORDER BY taken_utc DESC
+        "SELECT p.id, p.file_path, p.file_name,
+                p.taken_naive_local, p.taken_utc,
+                p.thumb_sha, p.world_visit_id,
+                wv.world_name AS world_name
+         FROM photo_records p
+         LEFT JOIN world_visits wv ON wv.id = p.world_visit_id
+         ORDER BY p.taken_utc DESC
          LIMIT ?1",
     )
     .bind(limit)
@@ -114,24 +120,63 @@ pub async fn list_recent(tx: &mut Transaction<'_, Sqlite>, limit: i64) -> Result
 
     let mut out = Vec::with_capacity(rows.len());
     for row in rows {
-        let file_path_str: String = row.try_get("file_path")?;
-        let taken_naive_local_str: String = row.try_get("taken_naive_local")?;
-        let taken_utc: DateTime<Utc> = row.try_get("taken_utc")?;
-        out.push(PhotoRecord {
-            id: row.try_get("id")?,
-            file_path: PathBuf::from(file_path_str),
-            file_name: row.try_get("file_name")?,
-            taken_naive_local: NaiveDateTime::parse_from_str(
-                &taken_naive_local_str,
-                "%Y-%m-%d %H:%M:%S",
-            )
-            .map_err(|e| crate::Error::Config(format!("invalid taken_naive_local: {e}")))?,
-            taken_utc,
-            thumb_sha: row.try_get("thumb_sha")?,
-            world_visit_id: row.try_get("world_visit_id")?,
-        });
+        out.push(row_to_photo_record(&row)?);
     }
     Ok(out)
+}
+
+/// `world_visit_id` に紐づく photo を `taken_utc` 降順で `limit` 件返す。
+/// /history の visit 詳細パネルでサムネ表示するための read endpoint。
+pub async fn list_for_visit(
+    tx: &mut Transaction<'_, Sqlite>,
+    visit_id: i64,
+    limit: i64,
+) -> Result<Vec<PhotoRecord>> {
+    if limit <= 0 {
+        return Ok(Vec::new());
+    }
+    let rows = sqlx::query(
+        "SELECT p.id, p.file_path, p.file_name,
+                p.taken_naive_local, p.taken_utc,
+                p.thumb_sha, p.world_visit_id,
+                wv.world_name AS world_name
+         FROM photo_records p
+         LEFT JOIN world_visits wv ON wv.id = p.world_visit_id
+         WHERE p.world_visit_id = ?1
+         ORDER BY p.taken_utc DESC
+         LIMIT ?2",
+    )
+    .bind(visit_id)
+    .bind(limit)
+    .fetch_all(&mut **tx)
+    .await?;
+
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        out.push(row_to_photo_record(&row)?);
+    }
+    Ok(out)
+}
+
+/// row → `PhotoRecord` の共通変換 (list_recent / list_for_visit / fetch_by_id 共有)。
+fn row_to_photo_record(row: &sqlx::sqlite::SqliteRow) -> Result<PhotoRecord> {
+    let file_path_str: String = row.try_get("file_path")?;
+    let taken_naive_local_str: String = row.try_get("taken_naive_local")?;
+    let taken_utc: DateTime<Utc> = row.try_get("taken_utc")?;
+    Ok(PhotoRecord {
+        id: row.try_get("id")?,
+        file_path: PathBuf::from(file_path_str),
+        file_name: row.try_get("file_name")?,
+        taken_naive_local: NaiveDateTime::parse_from_str(
+            &taken_naive_local_str,
+            "%Y-%m-%d %H:%M:%S",
+        )
+        .map_err(|e| crate::Error::Config(format!("invalid taken_naive_local: {e}")))?,
+        taken_utc,
+        thumb_sha: row.try_get("thumb_sha")?,
+        world_visit_id: row.try_get("world_visit_id")?,
+        world_name: row.try_get("world_name")?,
+    })
 }
 
 /// `thumb_sha` がまだ埋まっていない (= サムネ未生成) row を id 昇順で最大 `limit` 件返す。
@@ -199,31 +244,21 @@ pub async fn update_thumb_sha(
 /// 見つからなければ `None`。
 pub async fn fetch_by_id(tx: &mut Transaction<'_, Sqlite>, id: i64) -> Result<Option<PhotoRecord>> {
     let row = sqlx::query(
-        "SELECT id, file_path, file_name,
-                taken_naive_local, taken_utc,
-                thumb_sha, world_visit_id
-         FROM photo_records
-         WHERE id = ?1",
+        "SELECT p.id, p.file_path, p.file_name,
+                p.taken_naive_local, p.taken_utc,
+                p.thumb_sha, p.world_visit_id,
+                wv.world_name AS world_name
+         FROM photo_records p
+         LEFT JOIN world_visits wv ON wv.id = p.world_visit_id
+         WHERE p.id = ?1",
     )
     .bind(id)
     .fetch_optional(&mut **tx)
     .await?;
-    let Some(row) = row else { return Ok(None) };
-    let file_path_str: String = row.try_get("file_path")?;
-    let taken_naive_local_str: String = row.try_get("taken_naive_local")?;
-    Ok(Some(PhotoRecord {
-        id: row.try_get("id")?,
-        file_path: PathBuf::from(file_path_str),
-        file_name: row.try_get("file_name")?,
-        taken_naive_local: NaiveDateTime::parse_from_str(
-            &taken_naive_local_str,
-            "%Y-%m-%d %H:%M:%S",
-        )
-        .map_err(|e| crate::Error::Config(format!("invalid taken_naive_local: {e}")))?,
-        taken_utc: row.try_get("taken_utc")?,
-        thumb_sha: row.try_get("thumb_sha")?,
-        world_visit_id: row.try_get("world_visit_id")?,
-    }))
+    match row {
+        Some(row) => Ok(Some(row_to_photo_record(&row)?)),
+        None => Ok(None),
+    }
 }
 
 #[cfg(test)]
@@ -547,6 +582,181 @@ mod tests {
         assert_eq!(affected, 1);
         let got = fetch_by_id(&mut tx, id).await.unwrap().unwrap();
         assert_eq!(got.thumb_sha.as_deref(), Some("deadbeef"));
+    }
+
+    // -- world_name JOIN / list_for_visit -------------------------------------
+
+    /// raw_log_events / processed_log_files の FK を満たした上で world_visits に 1 行
+    /// 入れて id を返す test helper (projector を経由しない直 INSERT)。
+    /// `joined_utc` から決まる unique suffix で複数回呼べる。
+    async fn seed_world_visit(
+        pool: &sqlx::SqlitePool,
+        world_name: &str,
+        joined_utc: DateTime<Utc>,
+    ) -> i64 {
+        let unique_suffix = joined_utc.timestamp_millis();
+        let mut tx = pool.begin().await.unwrap();
+        sqlx::query(
+            "INSERT INTO processed_log_files (
+                file_identity_hash, log_sequence_key, volume_serial,
+                file_id_high, file_id_low, generation, creation_time, first_kb_hash,
+                file_name, file_size, mtime,
+                ingest_position, last_projected_raw_event_id,
+                tz_id, tz_source, processed_at
+            ) VALUES (
+                ?1, ?2, 0, 0, 0, 0, 0, 'k',
+                'a.txt', 0, '2026-05-10T00:00:00Z',
+                0, NULL, 'Asia/Tokyo', 'CapturedRealtime', '2026-05-10T00:00:00Z'
+            )",
+        )
+        .bind(format!("h-{unique_suffix}"))
+        .bind(format!("{unique_suffix}"))
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        let pf_id: i64 = sqlx::query_scalar("SELECT MAX(id) FROM processed_log_files")
+            .fetch_one(&mut *tx)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO raw_log_events (processed_log_file_id, byte_offset, event_type, payload_json)
+             VALUES (?1, 0, 'RoomEntering', '{}')",
+        )
+        .bind(pf_id)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        let raw_id: i64 = sqlx::query_scalar("SELECT MAX(id) FROM raw_log_events")
+            .fetch_one(&mut *tx)
+            .await
+            .unwrap();
+        let visit_id: i64 = sqlx::query_scalar(
+            "INSERT INTO world_visits (
+                source_raw_event_id, world_name,
+                resolution_state,
+                joined_naive_local, joined_utc,
+                joined_tz_id, joined_offset_seconds,
+                joined_resolution, joined_tz_source, joined_resolution_confidence,
+                left_utc
+            ) VALUES (?1, ?2, 'Resolved', '2026-05-10 00:00:00', ?3,
+                      'Asia/Tokyo', 32400, 'Single', 'CapturedRealtime', 'High', NULL)
+            RETURNING id",
+        )
+        .bind(raw_id)
+        .bind(world_name)
+        .bind(joined_utc)
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        visit_id
+    }
+
+    fn input_attached(path: &Path, taken_utc: DateTime<Utc>, visit_id: i64) -> PhotoRecordInput {
+        let mut input = input_at(path, taken_utc);
+        input.world_visit_id = Some(visit_id);
+        input
+    }
+
+    #[tokio::test]
+    async fn list_recent_returns_world_name_via_left_join_when_photo_attached_to_visit() {
+        // Arrange: 1 visit + 1 attached photo + 1 unattached photo
+        let (pool, _dir) = fresh_pool().await;
+        let visit_id = seed_world_visit(&pool, "PartyRoom", utc(2026, 5, 10, 12, 0, 0)).await;
+        let mut tx = pool.begin().await.unwrap();
+        let _attached = insert(
+            &mut tx,
+            &input_attached(Path::new("C:/p/in.png"), utc(2026, 5, 10, 12, 30, 0), visit_id),
+        )
+        .await
+        .unwrap();
+        let _orphan = insert(
+            &mut tx,
+            &input_at(Path::new("C:/p/orphan.png"), utc(2026, 5, 10, 11, 0, 0)),
+        )
+        .await
+        .unwrap();
+
+        // Act
+        let rows = list_recent(&mut tx, 10).await.unwrap();
+
+        // Assert: 新しい (= attached) photo が world_name="PartyRoom"、orphan は None
+        let by_name: std::collections::HashMap<&str, Option<&str>> = rows
+            .iter()
+            .map(|r| (r.file_name.as_str(), r.world_name.as_deref()))
+            .collect();
+        assert_eq!(by_name.get("in.png"), Some(&Some("PartyRoom")));
+        assert_eq!(by_name.get("orphan.png"), Some(&None));
+    }
+
+    #[tokio::test]
+    async fn list_for_visit_returns_only_photos_attached_to_given_visit_id() {
+        // Arrange: 2 visits + 各々 attached photo + 1 orphan
+        let (pool, _dir) = fresh_pool().await;
+        let v1 = seed_world_visit(&pool, "WorldA", utc(2026, 5, 10, 10, 0, 0)).await;
+        let v2 = seed_world_visit(&pool, "WorldB", utc(2026, 5, 10, 14, 0, 0)).await;
+        let mut tx = pool.begin().await.unwrap();
+        insert(
+            &mut tx,
+            &input_attached(Path::new("C:/p/a1.png"), utc(2026, 5, 10, 10, 30, 0), v1),
+        )
+        .await
+        .unwrap();
+        insert(
+            &mut tx,
+            &input_attached(Path::new("C:/p/a2.png"), utc(2026, 5, 10, 10, 45, 0), v1),
+        )
+        .await
+        .unwrap();
+        insert(
+            &mut tx,
+            &input_attached(Path::new("C:/p/b1.png"), utc(2026, 5, 10, 14, 30, 0), v2),
+        )
+        .await
+        .unwrap();
+        insert(
+            &mut tx,
+            &input_at(Path::new("C:/p/orphan.png"), utc(2026, 5, 10, 12, 0, 0)),
+        )
+        .await
+        .unwrap();
+
+        // Act
+        let only_v1 = list_for_visit(&mut tx, v1, 10).await.unwrap();
+
+        // Assert: WorldA の 2 件だけ、taken_utc 降順 (a2 → a1)
+        let names: Vec<_> = only_v1.iter().map(|r| r.file_name.as_str()).collect();
+        assert_eq!(names, vec!["a2.png", "a1.png"]);
+    }
+
+    #[tokio::test]
+    async fn list_for_visit_returns_empty_when_no_photos_attached_to_visit() {
+        let (pool, _dir) = fresh_pool().await;
+        let visit_id = seed_world_visit(&pool, "EmptyWorld", utc(2026, 5, 10, 12, 0, 0)).await;
+        let mut tx = pool.begin().await.unwrap();
+
+        let rows = list_for_visit(&mut tx, visit_id, 10).await.unwrap();
+
+        assert!(rows.is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_for_visit_returns_empty_when_limit_is_zero_or_negative() {
+        let (pool, _dir) = fresh_pool().await;
+        let visit_id = seed_world_visit(&pool, "W", utc(2026, 5, 10, 12, 0, 0)).await;
+        let mut tx = pool.begin().await.unwrap();
+        insert(
+            &mut tx,
+            &input_attached(Path::new("C:/p/x.png"), utc(2026, 5, 10, 12, 30, 0), visit_id),
+        )
+        .await
+        .unwrap();
+
+        let zero = list_for_visit(&mut tx, visit_id, 0).await.unwrap();
+        let neg = list_for_visit(&mut tx, visit_id, -1).await.unwrap();
+
+        assert!(zero.is_empty());
+        assert!(neg.is_empty());
     }
 
     #[tokio::test]

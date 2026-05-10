@@ -65,6 +65,9 @@ export interface PhotoRecord {
    * convertFileSrc() で asset:// URL に変換して `<img>` に貼る。 */
   thumbPath: string | null;
   worldVisitId: number | null;
+  /** world_visits.world_name を LEFT JOIN で取得した値。
+   * worldVisitId が null なら必ず null。photo card に表示し、クリックで /history に遷移。 */
+  worldName: string | null;
 }
 
 // `list_recent_videos` の戻り値要素。

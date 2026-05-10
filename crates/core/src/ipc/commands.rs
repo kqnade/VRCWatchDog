@@ -56,6 +56,9 @@ pub struct PhotoRecordDto {
     /// thumb がまだ生成されていなければ None (UI 側で placeholder 表示)。
     pub thumb_path: Option<PathBuf>,
     pub world_visit_id: Option<i64>,
+    /// `world_visits.world_name` を LEFT JOIN で引いた値。`world_visit_id` が None なら
+    /// 必ず None。photo_grid のカードに表示し、クリックで /history の visit に遷移する。
+    pub world_name: Option<String>,
 }
 
 impl PhotoRecordDto {
@@ -75,6 +78,7 @@ impl PhotoRecordDto {
             thumb_sha: r.thumb_sha,
             thumb_path,
             world_visit_id: r.world_visit_id,
+            world_name: r.world_name,
         }
     }
 }
@@ -334,6 +338,7 @@ mod tests {
             thumb_sha: None,
             thumb_path: None,
             world_visit_id: Some(7),
+            world_name: Some("TestWorld".into()),
         };
 
         let json = serde_json::to_string(&dto).expect("ser");
@@ -346,6 +351,7 @@ mod tests {
         assert!(json.contains("\"thumbSha\":null"));
         assert!(json.contains("\"thumbPath\":null"));
         assert!(json.contains("\"worldVisitId\":7"));
+        assert!(json.contains("\"worldName\":\"TestWorld\""));
     }
 
     #[test]
@@ -370,6 +376,7 @@ mod tests {
             ),
             thumb_sha: Some("abc123".into()),
             world_visit_id: None,
+            world_name: None,
         };
 
         let dto = PhotoRecordDto::from_record(record, Some(Path::new("C:/cache/thumbs")));
@@ -401,6 +408,7 @@ mod tests {
             ),
             thumb_sha: None, // thumb_writer まだ走ってない
             world_visit_id: None,
+            world_name: None,
         };
 
         let dto = PhotoRecordDto::from_record(record, Some(Path::new("C:/cache/thumbs")));

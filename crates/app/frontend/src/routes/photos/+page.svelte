@@ -118,17 +118,22 @@
         </div>
         <p class="truncate font-mono text-xs" title={photo.fileName}>{photo.fileName}</p>
         <p class="mt-1 text-xs opacity-60">{photo.takenNaiveLocal}</p>
-        <div class="mt-2 flex items-center justify-between text-xs">
+        <div class="mt-2 flex items-center justify-between gap-2 text-xs">
           {#if photo.worldVisitId}
-            <span class="rounded bg-muted px-1.5 py-0.5 text-muted-foreground"
-              >visit #{photo.worldVisitId}</span
+            <a
+              href="/history?visit={photo.worldVisitId}"
+              class="truncate rounded bg-muted px-1.5 py-0.5 text-muted-foreground hover:underline"
+              title={photo.worldName ?? `visit #${photo.worldVisitId}`}
+              onclick={(ev) => ev.stopPropagation()}
             >
+              {photo.worldName ?? `visit #${photo.worldVisitId}`}
+            </a>
           {:else}
             <span class="opacity-40">no visit</span>
           {/if}
           <button
             type="button"
-            class="opacity-0 transition group-hover:opacity-100 hover:underline"
+            class="shrink-0 opacity-0 transition group-hover:opacity-100 hover:underline"
             onclick={(ev) => handleOpenFolder(photo, ev)}
             title="フォルダを Explorer で開く"
           >

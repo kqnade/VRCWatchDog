@@ -112,6 +112,7 @@ pub fn run() {
             commands::save_settings,
             commands::get_initial_warnings,
             commands::list_recent_photos,
+            commands::list_photos_for_visit,
             commands::list_recent_visits,
             commands::list_recent_notifications,
             commands::list_recent_videos,

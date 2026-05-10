@@ -67,6 +67,14 @@ export function listRecentVisits(limit: number): Promise<Visit[]> {
   return invoke('list_recent_visits', { limit });
 }
 
+/**
+ * 指定 visit に紐づく写真を `takenUtc` 降順で最大 `limit` 件取得。
+ * /history で visit を展開したときに inline でサムネ表示するために使う。
+ */
+export function listPhotosForVisit(visitId: number, limit: number): Promise<PhotoRecord[]> {
+  return invoke('list_photos_for_visit', { visitId, limit });
+}
+
 /** 直近 `limit` 件の通知を `receivedUtc` 降順で取得。 */
 export function listRecentNotifications(limit: number): Promise<Notification[]> {
   return invoke('list_recent_notifications', { limit });
