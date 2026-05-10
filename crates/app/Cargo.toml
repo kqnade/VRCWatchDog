@@ -28,7 +28,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 # tauri.conf.json の assetProtocol.enable=true (plan §7) に対応する feature flag。
 # tauri-build はこの feature と conf の allowlist 一致を強制する。
-tauri = { version = "2", features = ["protocol-asset"] }
+tauri = { version = "2", features = ["protocol-asset", "tray-icon", "image-png"] }
 tauri-plugin-single-instance = "2"
 tauri-plugin-window-state = "2"
 tauri-plugin-autostart = "2"

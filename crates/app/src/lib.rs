@@ -21,7 +21,9 @@ use std::time::Duration;
 
 use chrono::Local;
 use sqlx::SqlitePool;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{AppHandle, Emitter, Manager, WindowEvent};
 use tokio::task::JoinSet;
 use tracing_subscriber::EnvFilter;
 use vrcwatchdog_core::db::repo::world_visits::{
@@ -48,6 +50,27 @@ use crate::state::AppState;
 
 /// projector batch の最大処理件数 (1 イテレーション)。
 const PROJECTOR_BATCH_SIZE: i64 = 500;
+
+/// main window を表示してフォーカスを当てる。tray の Show menu / 左クリックから呼ぶ。
+fn show_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
+/// main window が表示中なら hide、非表示なら show + focus。
+fn toggle_main_window_visibility(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        match window.is_visible() {
+            Ok(true) => {
+                let _ = window.hide();
+            }
+            _ => show_main_window(app),
+        }
+    }
+}
 
 /// projector の poll 間隔。raw_log_events に push があってから projection されるまでの
 /// 最大遅延の目安。
@@ -121,11 +144,58 @@ pub fn run() {
             commands::list_recent_notifications,
             commands::list_recent_videos,
         ])
-        .setup(|_app| {
-            // 起動時警告は `get_initial_warnings` command で frontend が pull する
-            // 方式に置換済み (race 対策)。setup() で emit する旧方式は
-            // listener attach 前のため取りこぼされていた。
-            // Step 10 (--startup の hidden 化) は system tray と一緒に Phase 5e+ で。
+        .setup(|app| {
+            // Phase E: system tray + close-to-tray + --startup hidden launch。
+            // 1. tray icon + Show/Quit menu を作成
+            // 2. main window の close → hide に置換
+            // 3. cli args に --startup が無ければウィンドウを show (visible:false が
+            //    tauri.conf.json で初期値なので、通常起動時はここで明示 show する)
+            let show_item = MenuItem::with_id(app, "show", "Show window", true, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+
+            let _tray = TrayIconBuilder::with_id("main")
+                .tooltip("VRCWatchDog")
+                .icon(app.default_window_icon().cloned().ok_or_else(|| {
+                    tauri::Error::AssetNotFound("default window icon".into())
+                })?)
+                .menu(&menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "show" => show_main_window(app),
+                    "quit" => app.exit(0),
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        toggle_main_window_visibility(tray.app_handle());
+                    }
+                })
+                .build(app)?;
+
+            // close ボタンで quit せず hide-to-tray する
+            if let Some(window) = app.get_webview_window("main") {
+                let win_for_close = window.clone();
+                window.on_window_event(move |event| {
+                    if let WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = win_for_close.hide();
+                    }
+                });
+            }
+
+            // --startup 起動 (autostart 経由) ならそのまま hidden、それ以外は show。
+            // settings の autostart_enabled が true でも、初回手動起動時は明示 show したい。
+            let started_hidden = std::env::args().any(|a| a == "--startup");
+            if !started_hidden {
+                show_main_window(app.handle());
+            }
+
             Ok(())
         })
         .build(tauri::generate_context!())
