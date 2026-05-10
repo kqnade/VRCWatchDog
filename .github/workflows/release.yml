@@ -55,11 +55,16 @@ jobs:
         run: pnpm install --frozen-lockfile
         working-directory: crates/app/frontend
 
-      # tauri build は内部で beforeBuildCommand=`pnpm build` を呼んで frontend dist を
-      # 生成し、続けて Rust release build → tauri-bundler で NSIS をビルドする。
-      - name: cargo tauri build
-        run: pnpm tauri build
-        working-directory: crates/app/frontend
+      # tauri-cli は `tauri.conf.json` を **cwd 配下** で探すので、`crates/app` から
+      # 実行する必要がある。frontend/ から実行すると "Couldn't recognize the current
+      # folder as a Tauri project" で落ちる (CI 失敗実績あり)。
+      # @tauri-apps/cli は frontend の devDep として install してあるので、binary を
+      # 絶対パスで指す。tauri build は内部で beforeBuildCommand=`pnpm build` を呼んで
+      # frontend dist を生成し、続けて Rust release build → tauri-bundler で NSIS。
+      - name: tauri build (NSIS installer)
+        run: ./frontend/node_modules/.bin/tauri build
+        working-directory: crates/app
+        shell: bash
 
       # tauri-bundler の出力先は `target/release/bundle/nsis/<name>_<version>_x64-setup.exe`。
       # workspace root の target を見れば良い。
