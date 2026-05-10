@@ -49,6 +49,20 @@ jobs:
           components: rustfmt
       - run: cargo fmt --all --check
 
+  audit:
+    name: cargo audit (RustSec)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # taiki-e/install-action は pre-built バイナリを引っ張ってくれるので、
+      # cargo install (compile from source ~3min) を回避できる。
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      # `.cargo/audit.toml` の ignore を尊重する。
+      # production binary に乗らない RUSTSEC は ignore でリストし、必ず理由をコメント。
+      - run: cargo audit
+
   core-linux:
     name: core clippy + test (ubuntu)
     runs-on: ubuntu-latest

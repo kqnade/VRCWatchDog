@@ -1,0 +1,23 @@
+# cargo-audit (rustsec/cargo-audit) 設定。CI の `cargo audit` job が読む。
+#
+# 「production binary に乗らない」「修正版が無い」アドバイザリのみ ignore する。
+# プロダクションコードに影響するものは absolutely 隠さない。
+#
+# ignore に追加するときは:
+#   1. アドバイザリ ID (RUSTSEC-yyyy-nnnn)
+#   2. 何故 ignore して良いか (依存パス + binary に出ない理由)
+#   3. ignore 解消条件 (= upstream が修正したら外す)
+# をコメントで残すこと。
+
+[advisories]
+ignore = [
+    # rsa 0.9.10 — Marvin Attack timing sidechannel.
+    # Pulled in by sqlx-macros-core → sqlx-mysql → rsa, even though our sqlx
+    # config is `default-features = false, features = ["sqlite", ...]`. This
+    # is a known sqlx 0.8 quirk: the macros crate references all backend crates
+    # at compile-time, so they appear in Cargo.lock without ever entering the
+    # final binary. We only ship the sqlite backend.
+    # Upstream status: "No fixed upgrade is available!" — wait for sqlx 0.9
+    # or for rsa to ship a constant-time fix. Re-evaluate then.
+    "RUSTSEC-2023-0071",
+]
