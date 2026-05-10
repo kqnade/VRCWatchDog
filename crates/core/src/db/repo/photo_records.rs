@@ -134,6 +134,65 @@ pub async fn list_recent(tx: &mut Transaction<'_, Sqlite>, limit: i64) -> Result
     Ok(out)
 }
 
+/// `thumb_sha` がまだ埋まっていない (= サムネ未生成) row を id 昇順で最大 `limit` 件返す。
+///
+/// thumb_writer actor が worker loop で「次に処理すべき photo」を取り出すための query。
+/// 戻り値は処理に必要な最小フィールド (id, file_path) のみで、photo_records 全列は読まない。
+///
+/// `limit <= 0` なら空 vec (`list_recent` と同じ防衛)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThumblessPhotoRow {
+    pub id: i64,
+    pub file_path: PathBuf,
+}
+
+pub async fn list_thumbless(
+    tx: &mut Transaction<'_, Sqlite>,
+    limit: i64,
+) -> Result<Vec<ThumblessPhotoRow>> {
+    if limit <= 0 {
+        return Ok(Vec::new());
+    }
+
+    let rows = sqlx::query(
+        "SELECT id, file_path
+         FROM photo_records
+         WHERE thumb_sha IS NULL
+         ORDER BY id ASC
+         LIMIT ?1",
+    )
+    .bind(limit)
+    .fetch_all(&mut **tx)
+    .await?;
+
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        let file_path_str: String = row.try_get("file_path")?;
+        out.push(ThumblessPhotoRow {
+            id: row.try_get("id")?,
+            file_path: PathBuf::from(file_path_str),
+        });
+    }
+    Ok(out)
+}
+
+/// `id` の photo_records 行の `thumb_sha` を更新する。
+///
+/// 該当 row が無い場合は no-op (rows_affected = 0)。
+/// thumb_writer は処理完了後にこの関数で sha を書き戻す。
+pub async fn update_thumb_sha(
+    tx: &mut Transaction<'_, Sqlite>,
+    id: i64,
+    thumb_sha: &str,
+) -> Result<u64> {
+    let result = sqlx::query("UPDATE photo_records SET thumb_sha = ?1 WHERE id = ?2")
+        .bind(thumb_sha)
+        .bind(id)
+        .execute(&mut **tx)
+        .await?;
+    Ok(result.rows_affected())
+}
+
 /// 単一 photo を id で引く。photo_grid のクリック → 詳細パネルや、open_photo command の
 /// path 解決などで使う想定。
 ///
@@ -372,5 +431,131 @@ mod tests {
         assert_eq!(got.taken_utc, taken);
         assert!(got.thumb_sha.is_none());
         assert!(got.world_visit_id.is_none());
+    }
+
+    // -- list_thumbless / update_thumb_sha (Phase 6.3.1) -----------------------
+
+    #[tokio::test]
+    async fn list_thumbless_returns_only_rows_with_null_thumb_sha() {
+        // Arrange: 3 件 insert → 真ん中だけ thumb_sha を埋める
+        let (pool, _dir) = fresh_pool().await;
+        let mut tx = pool.begin().await.unwrap();
+        let id_a = insert(
+            &mut tx,
+            &input_at(Path::new("C:/p/a.png"), utc(2026, 5, 10, 12, 0, 0)),
+        )
+        .await
+        .unwrap();
+        let _id_b = insert(
+            &mut tx,
+            &input_at(Path::new("C:/p/b.png"), utc(2026, 5, 10, 13, 0, 0)),
+        )
+        .await
+        .unwrap();
+        let id_c = insert(
+            &mut tx,
+            &input_at(Path::new("C:/p/c.png"), utc(2026, 5, 10, 14, 0, 0)),
+        )
+        .await
+        .unwrap();
+        update_thumb_sha(&mut tx, _id_b, "blake3-of-b")
+            .await
+            .unwrap();
+
+        // Act
+        let rows = list_thumbless(&mut tx, 100).await.unwrap();
+
+        // Assert: a と c が残り、id 昇順
+        let ids: Vec<_> = rows.iter().map(|r| r.id).collect();
+        assert_eq!(
+            ids,
+            vec![id_a, id_c],
+            "thumb_sha が NULL の行だけ id ASC で返る"
+        );
+    }
+
+    #[tokio::test]
+    async fn list_thumbless_respects_limit_and_returns_oldest_n_first() {
+        // Arrange: 5 件 insert (全部 thumb_sha=NULL)
+        let (pool, _dir) = fresh_pool().await;
+        let mut tx = pool.begin().await.unwrap();
+        for i in 0..5 {
+            insert(
+                &mut tx,
+                &input_at(
+                    &PathBuf::from(format!("C:/p/{i}.png")),
+                    utc(2026, 5, 10, 10 + i, 0, 0),
+                ),
+            )
+            .await
+            .unwrap();
+        }
+
+        // Act: limit=2 なら id 昇順で先頭 2 件
+        let rows = list_thumbless(&mut tx, 2).await.unwrap();
+
+        // Assert
+        assert_eq!(rows.len(), 2);
+        let names: Vec<_> = rows
+            .iter()
+            .map(|r| {
+                r.file_path
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+        assert_eq!(
+            names,
+            vec!["0.png", "1.png"],
+            "id 昇順で oldest 2 件 (= 古い photo を先に処理)"
+        );
+    }
+
+    #[tokio::test]
+    async fn list_thumbless_returns_empty_when_limit_is_zero_or_negative() {
+        let (pool, _dir) = fresh_pool().await;
+        let mut tx = pool.begin().await.unwrap();
+        insert(
+            &mut tx,
+            &input_at(Path::new("C:/p/x.png"), utc(2026, 5, 10, 12, 0, 0)),
+        )
+        .await
+        .unwrap();
+
+        let zero = list_thumbless(&mut tx, 0).await.unwrap();
+        let neg = list_thumbless(&mut tx, -3).await.unwrap();
+
+        assert!(zero.is_empty());
+        assert!(neg.is_empty());
+    }
+
+    #[tokio::test]
+    async fn update_thumb_sha_writes_value_and_returns_one_row_affected() {
+        let (pool, _dir) = fresh_pool().await;
+        let mut tx = pool.begin().await.unwrap();
+        let id = insert(
+            &mut tx,
+            &input_at(Path::new("C:/p/x.png"), utc(2026, 5, 10, 12, 0, 0)),
+        )
+        .await
+        .unwrap();
+
+        let affected = update_thumb_sha(&mut tx, id, "deadbeef").await.unwrap();
+
+        assert_eq!(affected, 1);
+        let got = fetch_by_id(&mut tx, id).await.unwrap().unwrap();
+        assert_eq!(got.thumb_sha.as_deref(), Some("deadbeef"));
+    }
+
+    #[tokio::test]
+    async fn update_thumb_sha_is_noop_for_unknown_id() {
+        let (pool, _dir) = fresh_pool().await;
+        let mut tx = pool.begin().await.unwrap();
+
+        let affected = update_thumb_sha(&mut tx, 9999, "deadbeef").await.unwrap();
+
+        assert_eq!(affected, 0, "存在しない id は no-op (rows_affected = 0)");
     }
 }
