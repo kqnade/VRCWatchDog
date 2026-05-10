@@ -94,32 +94,30 @@ pub async fn insert_pending(
 /// 現在のアクティブ visit (= `Pending`/`Resolved` で `left_utc IS NULL`) を取得。
 /// Joining wrld の宛先や、次の RoomEntering で finalize する対象を選ぶのに使う。
 pub async fn fetch_active(tx: &mut Transaction<'_, Sqlite>) -> Result<Option<ActiveVisit>> {
-    let row: Option<(i64, String, Option<String>, Option<String>, String, String)> =
-        sqlx::query_as(
-            "SELECT id, resolution_state, world_id, instance_id, world_name, joined_utc
-             FROM world_visits
-             WHERE resolution_state IN ('Pending', 'Resolved')
-               AND left_utc IS NULL
-             ORDER BY joined_utc DESC
-             LIMIT 1",
-        )
-        .fetch_optional(&mut **tx)
-        .await?;
-    Ok(
-        row.map(|(id, state, world_id, instance_id, world_name, utc_str)| {
-            let joined_utc = DateTime::parse_from_rfc3339(&utc_str)
-                .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now());
-            ActiveVisit {
-                id,
-                resolution_state: state,
-                world_id,
-                instance_id,
-                world_name,
-                joined_utc,
-            }
-        }),
+    use sqlx::Row;
+    let row = sqlx::query(
+        "SELECT id, resolution_state, world_id, instance_id, world_name, joined_utc
+         FROM world_visits
+         WHERE resolution_state IN ('Pending', 'Resolved')
+           AND left_utc IS NULL
+         ORDER BY joined_utc DESC
+         LIMIT 1",
     )
+    .fetch_optional(&mut **tx)
+    .await?;
+    let Some(row) = row else { return Ok(None) };
+    let utc_str: String = row.try_get("joined_utc")?;
+    let joined_utc = DateTime::parse_from_rfc3339(&utc_str)
+        .map(|dt| dt.with_timezone(&Utc))
+        .unwrap_or_else(|_| Utc::now());
+    Ok(Some(ActiveVisit {
+        id: row.try_get("id")?,
+        resolution_state: row.try_get("resolution_state")?,
+        world_id: row.try_get("world_id")?,
+        instance_id: row.try_get("instance_id")?,
+        world_name: row.try_get("world_name")?,
+        joined_utc,
+    }))
 }
 
 /// `Joining wrld_xxx:nonce` を受けて、 `Pending` の visit を `Resolved` に遷移させる。
