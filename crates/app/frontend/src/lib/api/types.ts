@@ -71,14 +71,16 @@ export interface PhotoRecord {
 }
 
 // `list_recent_videos` の戻り値要素。
-// title / thumbnailUrl / thumbnailSha は将来の video_info service が oembed 等から
-// fetch して埋める予定 (現状は NULL)。
+// title / thumbnailUrl / thumbnailSha は video_info actor が noembed から
+// fetch して埋める。thumbnailPath は backend が `<thumb_dir>/<sha>.webp` を組み立てる。
 export interface Video {
   id: number;
   url: string;
   title: string | null;
   thumbnailUrl: string | null;
   thumbnailSha: string | null;
+  /** thumbnail webp の絶対パス。convertFileSrc() で asset:// に変換して img 表示。 */
+  thumbnailPath: string | null;
   detectedNaiveLocal: string;
   detectedUtc: string;
   worldVisitId: number | null;

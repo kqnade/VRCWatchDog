@@ -4,6 +4,7 @@
 //! [`super::write_actor`]) が制御する。これにより複数 repo 操作を 1 transaction に
 //! 束ねる柔軟性と、テストで `tx.rollback()` で確実にクリーンに戻せる利点がある。
 
+pub mod failed_video_lookups;
 pub mod notification_records;
 pub mod photo_records;
 pub mod player_sessions;

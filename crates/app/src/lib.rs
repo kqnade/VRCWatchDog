@@ -40,6 +40,7 @@ use vrcwatchdog_core::ipc::events::names as event_names;
 use vrcwatchdog_core::projector::project_batch;
 use vrcwatchdog_core::settings::Settings;
 use vrcwatchdog_core::thumb_writer::{ThumbWriterActor, ThumbWriterConfig};
+use vrcwatchdog_core::video_info::{VideoInfoActor, VideoInfoConfig};
 
 use crate::bootstrap::Bootstrap;
 use crate::paths::{default_vrchat_log_dir, AppPaths};
@@ -212,7 +213,21 @@ async fn spawn_background_tasks(
     // thumb_writer: photo_records から thumb_sha NULL の行を拾って webp を生成する。
     // photo_directory に依存しない (DB の中身だけ見る) ので無条件 spawn。
     // 既存写真がスキャン済みでも、thumb 未生成なら拾い続ける。
-    spawn_thumb_writer(&mut tasks, pool.clone(), thumb_dir);
+    spawn_thumb_writer(&mut tasks, pool.clone(), thumb_dir.clone());
+
+    // video_info actor (Phase D): video_records.title IS NULL の行を順次 noembed に
+    // 問い合わせて metadata + thumbnail を補完する。失敗 URL は failed_video_lookups に
+    // TTL 付きで negative cache。reqwest は network が無くても spawn 自体は失敗しないので
+    // unconditional に起動 (offline なら transient_fail loop)。
+    match VideoInfoActor::new(pool.clone(), VideoInfoConfig::new(thumb_dir)) {
+        Ok(actor) => {
+            tasks.spawn(async move { actor.run().await });
+            tracing::info!("video_info actor spawned");
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "video_info actor failed to start; metadata fetch disabled");
+        }
+    }
 
     // process_monitor + finalize coordinator (Phase 7.4.2):
     // monitor は 2s 間隔で polling、Started/Stopped を mpsc で送出。

@@ -77,6 +77,64 @@ pub async fn insert(
     Ok(row.0)
 }
 
+/// `title IS NULL` (= まだ video_info actor が触っていない) row を id 昇順で返す。
+/// `limit <= 0` は空 vec。actor が batch 単位で取り出して順次 noembed に問い合わせる。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingMetadataRow {
+    pub id: i64,
+    pub url: String,
+}
+
+pub async fn list_pending_metadata(
+    tx: &mut Transaction<'_, Sqlite>,
+    limit: i64,
+) -> Result<Vec<PendingMetadataRow>> {
+    if limit <= 0 {
+        return Ok(Vec::new());
+    }
+    let rows = sqlx::query(
+        "SELECT id, url FROM video_records
+         WHERE title IS NULL
+         ORDER BY id ASC
+         LIMIT ?1",
+    )
+    .bind(limit)
+    .fetch_all(&mut **tx)
+    .await?;
+
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        out.push(PendingMetadataRow {
+            id: row.try_get("id")?,
+            url: row.try_get("url")?,
+        });
+    }
+    Ok(out)
+}
+
+/// 1 row の title / thumbnail_url / thumbnail_sha を更新する。
+/// rows_affected を返す (= 0 なら id 不存在で no-op)。
+pub async fn update_metadata(
+    tx: &mut Transaction<'_, Sqlite>,
+    id: i64,
+    title: Option<&str>,
+    thumbnail_url: Option<&str>,
+    thumbnail_sha: Option<&str>,
+) -> Result<u64> {
+    let result = sqlx::query(
+        "UPDATE video_records
+         SET title = ?1, thumbnail_url = ?2, thumbnail_sha = ?3
+         WHERE id = ?4",
+    )
+    .bind(title)
+    .bind(thumbnail_url)
+    .bind(thumbnail_sha)
+    .bind(id)
+    .execute(&mut **tx)
+    .await?;
+    Ok(result.rows_affected())
+}
+
 /// 検出日時 (`detected_utc`) の新しい順に最大 `limit` 件を返す。
 pub async fn list_recent(tx: &mut Transaction<'_, Sqlite>, limit: i64) -> Result<Vec<VideoRecord>> {
     if limit <= 0 {

@@ -207,7 +207,11 @@ pub async fn list_recent_videos(
         .await
         .map_err(|e| e.to_string())?;
     tx.commit().await.map_err(|e| format!("commit tx: {e}"))?;
-    Ok(rows.into_iter().map(VideoDto::from).collect())
+    let thumb_dir = state.paths.thumb_dir.as_path();
+    Ok(rows
+        .into_iter()
+        .map(|r| VideoDto::from_record(r, Some(thumb_dir)))
+        .collect())
 }
 
 /// 直近の通知を `received_utc` 降順で最大 `limit` 件返す。/notifications 画面用。

@@ -15,5 +15,6 @@ pub mod projector;
 pub mod settings;
 pub mod thumb_writer;
 pub mod time;
+pub mod video_info;
 
 pub use error::{Error, Result};

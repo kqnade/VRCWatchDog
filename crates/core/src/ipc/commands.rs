@@ -93,8 +93,9 @@ impl From<PhotoRecord> for PhotoRecordDto {
 
 /// `list_recent_videos` command の戻り値要素。/videos 画面用。
 ///
-/// `title` / `thumbnail_url` / `thumbnail_sha` は Phase 7.3.3 の video_info service が
-/// 後で fetch して埋める前提。それまでは frontend が URL のみ表示する。
+/// `title` / `thumbnail_url` / `thumbnail_sha` は Phase D の video_info actor が
+/// 後で fetch して埋める。`thumbnail_path` は actor が `<thumb_dir>/<sha>.webp` を
+/// 書き込んだ後の絶対パスで、frontend が `convertFileSrc()` で asset:// に変換して img 表示する。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VideoDto {
@@ -103,19 +104,28 @@ pub struct VideoDto {
     pub title: Option<String>,
     pub thumbnail_url: Option<String>,
     pub thumbnail_sha: Option<String>,
+    /// thumbnail_sha が Some かつ caller が thumb_dir を渡したときのみ Some。
+    /// photo_records と同じ `<thumb_dir>/<sha>.webp` パターン。
+    pub thumbnail_path: Option<PathBuf>,
     pub detected_naive_local: String,
     pub detected_utc: DateTime<Utc>,
     pub world_visit_id: Option<i64>,
 }
 
-impl From<VideoRecord> for VideoDto {
-    fn from(r: VideoRecord) -> Self {
+impl VideoDto {
+    /// `VideoRecord` を DTO に変換し、`thumb_dir` 渡しなら `thumbnail_path` を組み立てる。
+    pub fn from_record(r: VideoRecord, thumb_dir: Option<&Path>) -> Self {
+        let thumbnail_path = match (r.thumbnail_sha.as_ref(), thumb_dir) {
+            (Some(sha), Some(dir)) => Some(dir.join(format!("{sha}.webp"))),
+            _ => None,
+        };
         Self {
             id: r.id,
             url: r.url,
             title: r.title,
             thumbnail_url: r.thumbnail_url,
             thumbnail_sha: r.thumbnail_sha,
+            thumbnail_path,
             detected_naive_local: r
                 .detected_naive_local
                 .format("%Y-%m-%d %H:%M:%S")
@@ -123,6 +133,14 @@ impl From<VideoRecord> for VideoDto {
             detected_utc: r.detected_utc,
             world_visit_id: r.world_visit_id,
         }
+    }
+}
+
+impl From<VideoRecord> for VideoDto {
+    /// thumb_dir 不明 fallback (`thumbnail_path` は常に `None`)。通常は
+    /// `from_record(record, Some(thumb_dir))` を使う。
+    fn from(r: VideoRecord) -> Self {
+        Self::from_record(r, None)
     }
 }
 

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { convertFileSrc } from '@tauri-apps/api/core';
   import { onMount } from 'svelte';
   import { listRecentVideos } from '$lib/api/commands';
   import type { Video } from '$lib/api/types';
@@ -72,25 +73,49 @@
 
   <ul class="space-y-2">
     {#each videos as video (video.id)}
-      <li class="rounded-md border bg-card p-3">
-        <div class="flex items-baseline justify-between gap-3">
-          <span class="truncate text-sm font-medium" title={video.title ?? video.url}>
-            {video.title ?? hostOf(video.url)}
-          </span>
-          <span class="shrink-0 font-mono text-xs opacity-60">{formatTime(video.detectedUtc)}</span>
-        </div>
-        <a
-          href={video.url}
-          target="_blank"
-          rel="noreferrer"
-          class="mt-1 block truncate font-mono text-xs text-muted-foreground hover:underline"
-          title={video.url}
-        >
-          {video.url}
-        </a>
-        {#if video.worldVisitId}
-          <p class="mt-1 text-xs opacity-55">visit #{video.worldVisitId}</p>
+      {@const thumbSrc = video.thumbnailPath ? convertFileSrc(video.thumbnailPath) : null}
+      <li class="flex gap-3 rounded-md border bg-card p-3">
+        {#if thumbSrc}
+          <img
+            src={thumbSrc}
+            alt={video.title ?? ''}
+            class="h-16 w-28 shrink-0 rounded bg-muted object-cover"
+            loading="lazy"
+          />
+        {:else}
+          <div
+            class="flex h-16 w-28 shrink-0 items-center justify-center rounded bg-muted text-[10px] opacity-50"
+          >
+            {video.title ? '...' : 'no thumb'}
+          </div>
         {/if}
+        <div class="min-w-0 flex-1">
+          <div class="flex items-baseline justify-between gap-3">
+            <span class="truncate text-sm font-medium" title={video.title ?? video.url}>
+              {video.title ?? hostOf(video.url)}
+            </span>
+            <span class="shrink-0 font-mono text-xs opacity-60">
+              {formatTime(video.detectedUtc)}
+            </span>
+          </div>
+          <a
+            href={video.url}
+            target="_blank"
+            rel="noreferrer"
+            class="mt-1 block truncate font-mono text-xs text-muted-foreground hover:underline"
+            title={video.url}
+          >
+            {video.url}
+          </a>
+          {#if video.worldVisitId}
+            <a
+              href="/history?visit={video.worldVisitId}"
+              class="mt-1 inline-block font-mono text-xs text-muted-foreground hover:underline"
+            >
+              visit #{video.worldVisitId}
+            </a>
+          {/if}
+        </div>
       </li>
     {/each}
   </ul>
