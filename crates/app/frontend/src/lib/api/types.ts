@@ -143,6 +143,25 @@ export type LiveLogEvent =
     }
   | { kind: 'videoUrl'; naiveLocal: string; url: string };
 
+// `get_realtime_state` の戻り値。/realtime ページ mount 時に seed する。
+export interface CurrentWorld {
+  worldName: string;
+  worldId: string | null;
+  instanceId: string | null;
+}
+export interface RealtimeState {
+  currentWorld: CurrentWorld | null;
+  /** active visit に居る同居 player の display_name list (joined 順)。 */
+  players: string[];
+}
+
+// `get_thumb_progress` の戻り値。layout のサイドバー / /photos バッジで進捗表示。
+export interface ThumbProgress {
+  ready: number;
+  pending: number;
+  total: number;
+}
+
 // `get_self_player` の戻り値。1 度も VRChat にログインしていなければ
 // displayName は null。
 export interface SelfPlayer {

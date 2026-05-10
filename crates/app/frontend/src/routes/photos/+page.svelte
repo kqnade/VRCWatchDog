@@ -4,6 +4,8 @@
   import { FolderOpen, MapPin } from 'lucide-svelte';
   import { listRecentPhotos, openPhoto, openPhotoFolder } from '$lib/api/commands';
   import { i18n } from '$lib/i18n/use_t.svelte';
+  import { session } from '$lib/state/session.svelte';
+  import Badge from '$lib/ui/Badge.svelte';
   import PageHeader from '$lib/ui/PageHeader.svelte';
   import Skeleton from '$lib/ui/Skeleton.svelte';
   import type { PhotoRecord } from '$lib/api/types';
@@ -76,6 +78,14 @@
 
   onMount(() => {
     void load();
+    // thumb 生成中は 5 秒ごとに自動 refresh して新サムネを反映する。
+    // session.thumbProgress は layout が polling して更新しているのを購読する。
+    const refreshTimer = setInterval(() => {
+      if ((session.thumbProgress?.pending ?? 0) > 0) {
+        void load();
+      }
+    }, 5000);
+    return () => clearInterval(refreshTimer);
   });
 </script>
 
@@ -84,7 +94,20 @@
   description={isLoading
     ? i18n.t('loading')
     : i18n.t('photosCountFormat', { count: photos.length, max: PAGE_SIZE })}
-/>
+>
+  {#snippet actions()}
+    {#if session.thumbProgress}
+      {@const tp = session.thumbProgress}
+      {#if tp.pending > 0}
+        <Badge variant="default" class="animate-pulse">
+          サムネ {tp.ready} / {tp.total}
+        </Badge>
+      {:else if tp.total > 0}
+        <Badge variant="success">サムネ {tp.ready} / {tp.total}</Badge>
+      {/if}
+    {/if}
+  {/snippet}
+</PageHeader>
 
 {#if loadError}
   <div class="mb-4 rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">

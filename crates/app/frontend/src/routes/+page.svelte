@@ -13,29 +13,20 @@
     Video,
   } from 'lucide-svelte';
   import {
-    getInitialWarnings,
     listRecentNotifications,
     listRecentPhotos,
     listRecentVideos,
     listRecentVisits,
   } from '$lib/api/commands';
-  import { onHealthStatus, onOneDriveWarning, onSettingsCorrupt } from '$lib/api/events';
   import { i18n } from '$lib/i18n/use_t.svelte';
+  import { session } from '$lib/state/session.svelte';
   import Badge from '$lib/ui/Badge.svelte';
   import Card from '$lib/ui/Card.svelte';
   import PageHeader from '$lib/ui/PageHeader.svelte';
   import Skeleton from '$lib/ui/Skeleton.svelte';
-  import type {
-    HealthStatus,
-    OneDriveWarning,
-    SettingsCorruptWarning,
-  } from '$lib/api/types';
 
-  let settingsCorrupt = $state<SettingsCorruptWarning | null>(null);
-  let onedrive = $state<OneDriveWarning | null>(null);
-  let health = $state<HealthStatus | null>(null);
-
-  // 各 page への summary tile (件数のみ)
+  // Phase C fix: health / 警告 / self は session store (= layout で初期化、永続) から
+  // 読む。タブ間遷移で `null → 値` のフラッシュが起きないようにする。
   let stats = $state<{
     visits: number | null;
     photos: number | null;
@@ -88,25 +79,6 @@
   ]);
 
   onMount(() => {
-    let unlistens: Array<() => void> = [];
-    onSettingsCorrupt((p) => {
-      settingsCorrupt = p;
-    }).then((u) => unlistens.push(u));
-    onOneDriveWarning((p) => {
-      onedrive = p;
-    }).then((u) => unlistens.push(u));
-    onHealthStatus((p) => {
-      health = p;
-    }).then((u) => unlistens.push(u));
-
-    getInitialWarnings()
-      .then((w) => {
-        if (w.settingsCorrupt) settingsCorrupt = w.settingsCorrupt;
-        if (w.dbSyncRisk) onedrive = w.dbSyncRisk;
-      })
-      .catch(() => {});
-
-    // dashboard tile counts (1 度だけ)
     Promise.all([
       listRecentVisits(1000).then((v) => v.length).catch(() => 0),
       listRecentPhotos(1000).then((p) => p.length).catch(() => 0),
@@ -115,37 +87,33 @@
     ]).then(([visits, photos, videos, notifications]) => {
       stats = { visits, photos, videos, notifications };
     });
-
-    return () => {
-      for (const u of unlistens) u();
-    };
   });
 </script>
 
 <PageHeader title={i18n.t('appName')} description={i18n.t('homeSubtitle')} />
 
-{#if settingsCorrupt}
+{#if session.settingsCorrupt}
   <div class="mb-4 flex items-start gap-3 rounded-lg border border-warning bg-warning-bg/40 p-4 text-warning-foreground">
     <AlertTriangle size={18} class="mt-0.5 shrink-0" />
     <div class="space-y-1 text-sm">
       <p class="font-semibold">{i18n.t('warnSettingsCorruptTitle')}</p>
       <p>
         {i18n.t('warnSettingsCorruptBackup')}
-        <code class="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{settingsCorrupt.backupPath}</code>
+        <code class="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{session.settingsCorrupt.backupPath}</code>
       </p>
-      <p>{i18n.t('warnSettingsCorruptReason')}{settingsCorrupt.reason}</p>
+      <p>{i18n.t('warnSettingsCorruptReason')}{session.settingsCorrupt.reason}</p>
     </div>
   </div>
 {/if}
 
-{#if onedrive}
+{#if session.onedrive}
   <div class="mb-4 flex items-start gap-3 rounded-lg border border-warning bg-warning-bg/40 p-4 text-warning-foreground">
     <AlertTriangle size={18} class="mt-0.5 shrink-0" />
     <div class="space-y-1 text-sm">
-      <p class="font-semibold">{i18n.t('warnOneDriveTitle', { indicator: onedrive.detectedIndicator })}</p>
+      <p class="font-semibold">{i18n.t('warnOneDriveTitle', { indicator: session.onedrive.detectedIndicator })}</p>
       <p>
         {i18n.t('warnOneDrivePath')}
-        <code class="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{onedrive.dbPath}</code>
+        <code class="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{session.onedrive.dbPath}</code>
       </p>
       <p>{i18n.t('warnOneDriveAdvice')}</p>
     </div>
@@ -161,38 +129,38 @@
           <Heart size={16} class="text-primary" />
           <h2 class="text-sm font-semibold">{i18n.t('healthHeading')}</h2>
         </div>
-        {#if health}
-          <Badge variant={levelVariant(health.level)}>{health.level}</Badge>
+        {#if session.health}
+          <Badge variant={levelVariant(session.health.level)}>{session.health.level}</Badge>
         {:else}
           <Skeleton class="h-5 w-16" />
         {/if}
       </div>
     {/snippet}
-    {#if health}
+    {#if session.health}
       <div class="grid grid-cols-4 gap-4">
         <div>
           <div class="flex items-center gap-1 text-[11px] uppercase tracking-wider text-muted-foreground">
             <Timer size={10} />{i18n.t('healthBacklog')}
           </div>
-          <div class="mt-1 font-mono text-lg">{health.backlogSize.toLocaleString()}</div>
+          <div class="mt-1 font-mono text-lg">{session.health.backlogSize.toLocaleString()}</div>
         </div>
         <div>
           <div class="flex items-center gap-1 text-[11px] uppercase tracking-wider text-muted-foreground">
             <Timer size={10} />{i18n.t('healthLag')}
           </div>
-          <div class="mt-1 font-mono text-lg">{health.projectorLagSec}s</div>
+          <div class="mt-1 font-mono text-lg">{session.health.projectorLagSec}s</div>
         </div>
         <div>
           <div class="flex items-center gap-1 text-[11px] uppercase tracking-wider text-muted-foreground">
             <Database size={10} />{i18n.t('healthDbSize')}
           </div>
-          <div class="mt-1 font-mono text-lg">{formatBytes(health.dbSizeBytes)}</div>
+          <div class="mt-1 font-mono text-lg">{formatBytes(session.health.dbSizeBytes)}</div>
         </div>
         <div>
           <div class="flex items-center gap-1 text-[11px] uppercase tracking-wider text-muted-foreground">
             <HardDrive size={10} />{i18n.t('healthFreeDisk')}
           </div>
-          <div class="mt-1 font-mono text-lg">{formatBytes(health.freeDiskBytes)}</div>
+          <div class="mt-1 font-mono text-lg">{formatBytes(session.health.freeDiskBytes)}</div>
         </div>
       </div>
     {:else}

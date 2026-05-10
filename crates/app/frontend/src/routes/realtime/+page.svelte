@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { Bell, MapPin, Pause, Play, Radio, Trash2, Users, Video } from 'lucide-svelte';
+  import { getRealtimeState } from '$lib/api/commands';
   import { onLiveLogEvent } from '$lib/api/events';
   import { i18n } from '$lib/i18n/use_t.svelte';
   import Badge from '$lib/ui/Badge.svelte';
@@ -81,6 +82,21 @@
 
   onMount(() => {
     let unlisten: (() => void) | undefined;
+    // Seed: app 起動時に既に VRChat 動作中だった場合、catch-up 中の LiveLogEvent は
+    // listener attach 前に流れているので、現在の active visit を DB から pull して
+    // 「いまこのワールドに居る」状態を初期表示する。
+    getRealtimeState()
+      .then((s) => {
+        if (s.currentWorld) {
+          currentWorldName = s.currentWorld.worldName;
+          currentWorldId = s.currentWorld.worldId;
+          currentInstanceId = s.currentWorld.instanceId;
+        }
+        if (s.players.length > 0) {
+          presentPlayers = s.players;
+        }
+      })
+      .catch(() => {});
     onLiveLogEvent(applyEvent).then((u) => {
       unlisten = u;
     });

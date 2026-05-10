@@ -93,6 +93,22 @@ pub async fn ingest_photo(
     // Step 5: visit マッチ
     let world_visit_id = match_photo_to_visit(visits, taken_utc);
 
+    // Step 5.5: VRCX が原本をリネームした時の stale row 掃除。
+    // 同 taken_utc (= 同じ撮影瞬間) の photo_records が他 path で既存ならば、
+    // それは VRCX rename 前の旧 path (今は存在しない) のはず。実際にファイルが
+    // 無ければ delete してから新 path を insert する。新旧両方が存在する稀ケースは
+    // 削除せず両方残す (= ユーザーの手動コピー等を尊重)。
+    let stale_candidates = photo_records::list_other_at_taken_utc(tx, taken_utc, file_path).await?;
+    for (stale_id, stale_path) in stale_candidates {
+        let exists = tokio::fs::metadata(&stale_path)
+            .await
+            .map(|_| true)
+            .unwrap_or(false);
+        if !exists {
+            photo_records::delete_by_id(tx, stale_id).await?;
+        }
+    }
+
     // Step 6: insert (idempotent on file_path)
     let id = photo_records::insert(
         tx,
@@ -283,6 +299,46 @@ mod tests {
             panic!("expected Recorded");
         };
         assert_eq!(world_visit_id, Some(visit_id));
+    }
+
+    #[tokio::test]
+    async fn ingest_replaces_stale_row_when_vrcx_renames_with_wrld_suffix() {
+        // Arrange: 旧 path (実 file 無し) を DB に入れた状態で、同じ taken_utc の
+        // 新 path (実 file 有り) を ingest する。stale row は削除され、新 row だけ残る。
+        let (pool, dir) = fresh_pool().await;
+        let mut tx = pool.begin().await.unwrap();
+
+        // 旧 path は実 fs に存在させない (= VRCX に rename された後を想定)
+        let old_path = dir
+            .path()
+            .join("VRChat_2026-05-10_12-34-56.789_1920x1080.png");
+        let _ = ingest_photo(&mut tx, &old_path, &[], &jst()).await.unwrap();
+
+        // 新 path: 実 fs に存在させる
+        let new_path = dir
+            .path()
+            .join("VRChat_2026-05-10_12-34-56.789_1920x1080_wrld_abc-123.png");
+        std::fs::write(&new_path, b"").unwrap();
+
+        // Act: 新 path を ingest
+        let outcome = ingest_photo(&mut tx, &new_path, &[], &jst()).await.unwrap();
+
+        // Assert: Recorded、行数は 1 (旧は消えた)
+        match outcome {
+            IngestOutcome::Recorded { .. } => {}
+            other => panic!("expected Recorded, got {other:?}"),
+        }
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM photo_records")
+            .fetch_one(&mut *tx)
+            .await
+            .unwrap();
+        assert_eq!(count, 1, "stale 旧 path 行は削除され、新 path だけ残る");
+        let surviving_path: String =
+            sqlx::query_scalar("SELECT file_path FROM photo_records LIMIT 1")
+                .fetch_one(&mut *tx)
+                .await
+                .unwrap();
+        assert_eq!(surviving_path, new_path.to_string_lossy());
     }
 
     #[tokio::test]

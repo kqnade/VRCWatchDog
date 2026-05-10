@@ -8,8 +8,10 @@ import type {
   Notification,
   PhotoRecord,
   PlayerSession,
+  RealtimeState,
   SelfPlayer,
   Settings,
+  ThumbProgress,
   Video,
   Visit
 } from './types';
@@ -101,4 +103,18 @@ export function listRecentVideos(limit: number): Promise<Video[]> {
  */
 export function getSelfPlayer(): Promise<SelfPlayer> {
   return invoke('get_self_player');
+}
+
+/**
+ * /realtime ページが mount 時に呼んで現状を seed する。
+ * app 起動時に既に VRChat 動作中だった場合に、catch-up 中の LiveLogEvent を
+ * 取りこぼした分を DB スナップショットから復元する。
+ */
+export function getRealtimeState(): Promise<RealtimeState> {
+  return invoke('get_realtime_state');
+}
+
+/** thumb_writer の進捗 (ready / pending / total)。layout で 3s ごとに polling。 */
+export function getThumbProgress(): Promise<ThumbProgress> {
+  return invoke('get_thumb_progress');
 }

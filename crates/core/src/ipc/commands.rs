@@ -213,6 +213,27 @@ impl From<VisitWithCounts> for VisitDto {
     }
 }
 
+/// `get_realtime_state` command の戻り値。
+/// /realtime ページが開いた瞬間に「いま VRChat にいるなら何が起きているか」を
+/// seed するために使う。app 起動時にすでに VRChat が動いていると、catch-up 中の
+/// LiveLogEvent は frontend listener attach 前に流れて取りこぼされる。
+/// その救済として現状を 1 度 pull する。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RealtimeStateDto {
+    pub current_world: Option<CurrentWorldDto>,
+    /// active visit に居る co-player の display_name list (joined 順)。
+    pub players: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CurrentWorldDto {
+    pub world_name: String,
+    pub world_id: Option<String>,
+    pub instance_id: Option<String>,
+}
+
 /// `get_self_player` command の戻り値。
 /// 1 度も VRChat にログインしていなければ `display_name` は None で返す。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -221,6 +221,75 @@ pub async fn list_thumbless(
     Ok(out)
 }
 
+/// thumb 生成進捗 (ready / pending / total)。/photos ページ等で表示する。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ThumbProgress {
+    /// `thumb_sha IS NOT NULL` の row 数 (= 既に webp 生成済み)。
+    pub ready: i64,
+    /// `thumb_sha IS NULL` の row 数 (= thumb_writer の処理待ち)。
+    pub pending: i64,
+}
+
+impl ThumbProgress {
+    pub fn total(&self) -> i64 {
+        self.ready + self.pending
+    }
+}
+
+/// 全 photo_records の thumb 完了状況を 1 query で集計する。
+pub async fn count_thumb_progress(tx: &mut Transaction<'_, Sqlite>) -> Result<ThumbProgress> {
+    let row: (i64, i64) = sqlx::query_as(
+        "SELECT
+           COUNT(CASE WHEN thumb_sha IS NOT NULL THEN 1 END) AS ready,
+           COUNT(CASE WHEN thumb_sha IS NULL     THEN 1 END) AS pending
+         FROM photo_records",
+    )
+    .fetch_one(&mut **tx)
+    .await?;
+    Ok(ThumbProgress {
+        ready: row.0,
+        pending: row.1,
+    })
+}
+
+/// 同 `taken_utc` の他 photo_records 行 (= 同じ撮影瞬間 = 同じ写真の旧名) を
+/// 列挙する。VRCX が原本リネームしたあとに新パスを ingest するときに使う:
+/// 旧 path がまだ DB に残っているので、ファイル不在を確認した上で削除する。
+///
+/// 戻り値は `(id, file_path_str)` の組。caller が file 存在チェックして delete する。
+pub async fn list_other_at_taken_utc(
+    tx: &mut Transaction<'_, Sqlite>,
+    taken_utc: DateTime<Utc>,
+    exclude_path: &std::path::Path,
+) -> Result<Vec<(i64, PathBuf)>> {
+    let exclude_str = exclude_path.to_string_lossy().into_owned();
+    let rows = sqlx::query(
+        "SELECT id, file_path
+         FROM photo_records
+         WHERE taken_utc = ?1 AND file_path != ?2",
+    )
+    .bind(taken_utc)
+    .bind(&exclude_str)
+    .fetch_all(&mut **tx)
+    .await?;
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        let path_str: String = row.try_get("file_path")?;
+        out.push((row.try_get("id")?, PathBuf::from(path_str)));
+    }
+    Ok(out)
+}
+
+/// 1 行を id で削除。VRCX rename 後の stale row (旧 path) を消すのに使う。
+/// 戻り値は rows_affected (= 0 なら id 不存在で no-op)。
+pub async fn delete_by_id(tx: &mut Transaction<'_, Sqlite>, id: i64) -> Result<u64> {
+    let result = sqlx::query("DELETE FROM photo_records WHERE id = ?1")
+        .bind(id)
+        .execute(&mut **tx)
+        .await?;
+    Ok(result.rows_affected())
+}
+
 /// `id` の photo_records 行の `thumb_sha` を更新する。
 ///
 /// 該当 row が無い場合は no-op (rows_affected = 0)。

@@ -4,14 +4,13 @@
   import { onMount } from 'svelte';
   import { page } from '$app/stores';
   import { Activity, History, Image, LayoutDashboard, Radio, Settings as SettingsIcon, User, Video } from 'lucide-svelte';
-  import { getSelfPlayer, getSettings } from '$lib/api/commands';
+  import { getInitialWarnings, getSelfPlayer, getSettings, getThumbProgress } from '$lib/api/commands';
+  import { onHealthStatus, onOneDriveWarning, onSettingsCorrupt } from '$lib/api/events';
   import { i18n } from '$lib/i18n/use_t.svelte';
+  import { session } from '$lib/state/session.svelte';
   import { applyTheme } from '$lib/theme.svelte';
-  import type { SelfPlayer } from '$lib/api/types';
 
   let { children } = $props();
-
-  let self = $state<SelfPlayer | null>(null);
 
   type NavItem = {
     href: string;
@@ -39,19 +38,60 @@
     return current === href || current.startsWith(href + '/');
   }
 
-  onMount(async () => {
-    try {
-      const s = await getSettings();
-      i18n.setLocale(s.locale);
-      applyTheme(s);
-    } catch {
-      // settings 未取得でも default theme で表示できる
-    }
-    try {
-      self = await getSelfPlayer();
-    } catch {
-      self = null;
-    }
+  const unlistens: Array<() => void> = [];
+
+  onMount(() => {
+    // settings + self は最初の 1 度だけ fetch して store に流す。
+    getSettings()
+      .then((s) => {
+        i18n.setLocale(s.locale);
+        applyTheme(s);
+      })
+      .catch(() => {});
+    getSelfPlayer()
+      .then((s) => {
+        session.self = s;
+      })
+      .catch(() => {});
+
+    // Phase C fix: health / 起動時警告は layout で 1 度だけ subscribe し、session store に
+    // 流し込む。各 page は session.health を読むだけなので、ホームに戻るたびに
+    // 再 subscribe で null → 値 へリセットされる現象が消える。
+    onHealthStatus((p) => {
+      session.health = p;
+    }).then((u) => unlistens.push(u));
+    onSettingsCorrupt((p) => {
+      session.settingsCorrupt = p;
+    }).then((u) => unlistens.push(u));
+    onOneDriveWarning((p) => {
+      session.onedrive = p;
+    }).then((u) => unlistens.push(u));
+
+    getInitialWarnings()
+      .then((w) => {
+        if (w.settingsCorrupt) session.settingsCorrupt = w.settingsCorrupt;
+        if (w.dbSyncRisk) session.onedrive = w.dbSyncRisk;
+      })
+      .catch(() => {});
+
+    // thumb 進捗 polling: 3 秒間隔。pending=0 なら間隔を 30 秒に伸ばして CPU 節約。
+    let thumbTimer: ReturnType<typeof setTimeout> | null = null;
+    const tick = async () => {
+      try {
+        const p = await getThumbProgress();
+        session.thumbProgress = p;
+        const next = p.pending > 0 ? 3000 : 30000;
+        thumbTimer = setTimeout(tick, next);
+      } catch {
+        thumbTimer = setTimeout(tick, 30000);
+      }
+    };
+    void tick();
+
+    return () => {
+      for (const u of unlistens) u();
+      if (thumbTimer) clearTimeout(thumbTimer);
+    };
   });
 </script>
 
@@ -64,9 +104,9 @@
       </div>
       <div class="flex flex-col">
         <span class="text-sm font-semibold leading-none">VRCWatchDog</span>
-        {#if self?.displayName}
-          <span class="mt-1 flex items-center gap-1 truncate text-[11px] text-muted-foreground" title={self.authenticatedUtc ?? ''}>
-            <User size={10} />@{self.displayName}
+        {#if session.self?.displayName}
+          <span class="mt-1 flex items-center gap-1 truncate text-[11px] text-muted-foreground" title={session.self.authenticatedUtc ?? ''}>
+            <User size={10} />@{session.self.displayName}
           </span>
         {/if}
       </div>
@@ -83,7 +123,15 @@
             : 'text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground'}"
         >
           <Icon size={16} />
-          <span>{i18n.t(item.labelKey)}</span>
+          <span class="flex-1">{i18n.t(item.labelKey)}</span>
+          {#if item.href === '/photos' && session.thumbProgress && session.thumbProgress.pending > 0}
+            <span
+              class="rounded-full bg-primary/20 px-1.5 py-0.5 font-mono text-[9px] text-primary"
+              title="サムネ生成待ち {session.thumbProgress.pending} / {session.thumbProgress.total}"
+            >
+              {session.thumbProgress.pending}
+            </span>
+          {/if}
         </a>
       {/each}
     </nav>

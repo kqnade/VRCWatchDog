@@ -14,6 +14,7 @@
 
 use std::path::PathBuf;
 
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_opener::OpenerExt;
@@ -23,8 +24,8 @@ use vrcwatchdog_core::db::repo::{
 };
 use vrcwatchdog_core::ipc::commands as core_cmd;
 use vrcwatchdog_core::ipc::commands::{
-    InitialWarnings, NotificationDto, PhotoRecordDto, PlayerSessionDto, SelfPlayerDto, VideoDto,
-    VisitDto,
+    CurrentWorldDto, InitialWarnings, NotificationDto, PhotoRecordDto, PlayerSessionDto,
+    RealtimeStateDto, SelfPlayerDto, VideoDto, VisitDto,
 };
 use vrcwatchdog_core::ipc::events::{OneDriveWarning, SettingsCorruptWarning};
 use vrcwatchdog_core::settings::Settings;
@@ -249,6 +250,75 @@ pub async fn get_self_player(state: State<'_, AppState>) -> Result<SelfPlayerDto
     Ok(row
         .map(SelfPlayerDto::from)
         .unwrap_or_else(SelfPlayerDto::empty))
+}
+
+/// /realtime ページが mount 時に呼んで「いま VRChat にいる場合の現状」を seed する。
+/// app 起動時に既に VRChat が動いていると、log catch-up 中の LiveLogEvent は
+/// frontend listener attach 前に流れて取りこぼされるため、そのリカバリ用 endpoint。
+#[tauri::command]
+pub async fn get_realtime_state(state: State<'_, AppState>) -> Result<RealtimeStateDto, String> {
+    let mut tx = state
+        .db_pool
+        .begin()
+        .await
+        .map_err(|e| format!("begin tx: {e}"))?;
+    let active = world_visits::fetch_active(&mut tx)
+        .await
+        .map_err(|e| e.to_string())?;
+    let (current_world, players) = match active {
+        Some(v) => {
+            let players = player_sessions::list_for_visit(&mut tx, v.id, 200)
+                .await
+                .map_err(|e| e.to_string())?;
+            // active visit の中でまだ left_utc が NULL の player = 現在同居中
+            let presence: Vec<String> = players
+                .into_iter()
+                .filter(|p| p.left_utc.is_none())
+                .map(|p| p.display_name)
+                .collect();
+            (
+                Some(CurrentWorldDto {
+                    world_name: v.world_name,
+                    world_id: v.world_id,
+                    instance_id: v.instance_id,
+                }),
+                presence,
+            )
+        }
+        None => (None, Vec::new()),
+    };
+    tx.commit().await.map_err(|e| format!("commit tx: {e}"))?;
+    Ok(RealtimeStateDto {
+        current_world,
+        players,
+    })
+}
+
+/// thumb_writer の進捗 (ready / pending / total) を取得。/photos ページなどでバッジ表示する。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThumbProgressDto {
+    pub ready: i64,
+    pub pending: i64,
+    pub total: i64,
+}
+
+#[tauri::command]
+pub async fn get_thumb_progress(state: State<'_, AppState>) -> Result<ThumbProgressDto, String> {
+    let mut tx = state
+        .db_pool
+        .begin()
+        .await
+        .map_err(|e| format!("begin tx: {e}"))?;
+    let p = photo_records::count_thumb_progress(&mut tx)
+        .await
+        .map_err(|e| e.to_string())?;
+    tx.commit().await.map_err(|e| format!("commit tx: {e}"))?;
+    Ok(ThumbProgressDto {
+        ready: p.ready,
+        pending: p.pending,
+        total: p.total(),
+    })
 }
 
 /// 起動時に Bootstrap が検出済みの警告 (settings corrupt / DB OneDrive sync) を返す。
