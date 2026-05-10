@@ -29,6 +29,7 @@ use vrcwatchdog_core::log_watcher::{
     LogWatcherActor, NotifyEventSource, RealFsProbe, WatcherConfig,
 };
 use vrcwatchdog_core::photo_scanner::{NotifyPhotoSource, PhotoScannerActor, PhotoScannerConfig};
+use vrcwatchdog_core::process_monitor::{VRChatProcessMonitor, VRChatProcessMonitorConfig};
 use vrcwatchdog_core::projector::project_batch;
 use vrcwatchdog_core::settings::Settings;
 use vrcwatchdog_core::thumb_writer::{ThumbWriterActor, ThumbWriterConfig};
@@ -202,6 +203,12 @@ async fn spawn_background_tasks(
     // photo_directory に依存しない (DB の中身だけ見る) ので無条件 spawn。
     // 既存写真がスキャン済みでも、thumb 未生成なら拾い続ける。
     spawn_thumb_writer(&mut tasks, pool.clone(), thumb_dir);
+
+    // process_monitor: VRChat プロセスを 2s 間隔で polling。Phase 7.4.1 では
+    // 遷移を log に出すだけで、ClosedWithoutJoin への finalize は 7.4.2 で別 commit。
+    let monitor = VRChatProcessMonitor::new(VRChatProcessMonitorConfig::default());
+    tasks.spawn(async move { monitor.run().await });
+    tracing::info!("process_monitor spawned");
 
     // projector: 常時 spawn。raw が無くても loop は回り続け (no-op)、
     // 後から log_watcher が事象を流し込んだ時点で processing が始まる。

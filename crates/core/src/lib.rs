@@ -10,6 +10,7 @@ pub mod log_parser;
 pub mod log_watcher;
 pub mod photo;
 pub mod photo_scanner;
+pub mod process_monitor;
 pub mod projector;
 pub mod settings;
 pub mod thumb_writer;
