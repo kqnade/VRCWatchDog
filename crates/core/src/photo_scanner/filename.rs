@@ -6,6 +6,10 @@
 //!
 //! サポートする variant:
 //! - 標準形: `VRChat_2026-05-10_12-34-56.789_1920x1080.png`
+//! - VRCX リネーム後: `VRChat_2026-05-10_12-34-56.789_1920x1080_wrld_<uuid>.png`
+//!   VRCX (companion app) が起動中だと、VRChat が原本を書いた直後に
+//!   `_wrld_<world-id>` を末尾に挿入してリネームする。VRCX 入っているユーザーが
+//!   多数派なので、こちらが実質の主流フォーマット。両方受け入れる。
 //! - 古いビルド (fractional 秒なし): `VRChat_2026-05-10_12-34-56_1920x1080.png`
 //! - 解像度なし (極めて稀): `VRChat_2026-05-10_12-34-56.png`
 //! - 拡張子: `.png` / `.jpg` / `.jpeg` (case-insensitive)
@@ -19,12 +23,16 @@ use std::sync::OnceLock;
 use chrono::NaiveDateTime;
 use regex::Regex;
 
-/// `parse_vrchat_filename` の戻り値。撮影時刻と (取れれば) 解像度を持つ。
+/// `parse_vrchat_filename` の戻り値。撮影時刻と (取れれば) 解像度 + (取れれば) world_id。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VRChatPhotoMeta {
     pub taken_naive_local: NaiveDateTime,
     /// `WIDTHxHEIGHT` を取れた場合のみ。古いビルドや手動リネームで欠落することがある。
     pub resolution: Option<(u32, u32)>,
+    /// VRCX が末尾に埋め込んだ `_wrld_<uuid>` から抽出した world id。
+    /// `wrld_xxxxxxxx-xxxx-...` 形式そのままを `Some` で返す。VRCX 未使用なら None。
+    /// `world_visit_id` は時刻オーバーラップで決めるので、この id は補助情報。
+    pub world_id: Option<String>,
 }
 
 /// VRChat 命名規則のファイル名から [`VRChatPhotoMeta`] を取り出す。
@@ -56,9 +64,12 @@ pub fn parse_vrchat_filename(name: &str) -> Option<VRChatPhotoMeta> {
         _ => None,
     };
 
+    let world_id = caps.name("wrld").map(|m| m.as_str().to_string());
+
     Some(VRChatPhotoMeta {
         taken_naive_local,
         resolution,
+        world_id,
     })
 }
 
@@ -71,6 +82,8 @@ fn vrchat_re() -> &'static Regex {
         // - `date`: YYYY-MM-DD
         // - `time`: HH-MM-SS、fractional `.fff` は optional
         // - resolution `_WIDTHxHEIGHT` は optional
+        // - VRCX 後付け `_wrld_<uuid>` は optional (resolution の後にだけ来る)。
+        //   `wrld_<uuid>` 全体を `wrld` named group で捕捉し world_id として返す。
         // - 拡張子は png/jpg/jpeg (case-insensitive、`(?i)` で囲む)
         Regex::new(
             r"(?xi)
@@ -79,6 +92,7 @@ fn vrchat_re() -> &'static Regex {
             _
             (?P<time>\d{2}-\d{2}-\d{2}(?:\.\d+)?)
             (?:_(?P<w>\d+)x(?P<h>\d+))?
+            (?:_(?P<wrld>wrld_[0-9a-fA-F-]+))?
             \.(?:png|jpg|jpeg)$
             ",
         )
@@ -117,6 +131,7 @@ mod tests {
             Some(VRChatPhotoMeta {
                 taken_naive_local: nd_milli(2026, 5, 10, 12, 34, 56, 789),
                 resolution: Some((1920, 1080)),
+                world_id: None,
             })
         );
     }
@@ -133,6 +148,7 @@ mod tests {
             Some(VRChatPhotoMeta {
                 taken_naive_local: nd(2026, 5, 10, 12, 34, 56),
                 resolution: Some((1920, 1080)),
+                world_id: None,
             })
         );
     }
@@ -147,6 +163,24 @@ mod tests {
             Some(VRChatPhotoMeta {
                 taken_naive_local: nd(2026, 5, 10, 12, 34, 56),
                 resolution: None,
+                world_id: None,
+            })
+        );
+    }
+
+    #[test]
+    fn parses_vrcx_renamed_filename_with_wrld_suffix() {
+        // VRCX が後付けで埋め込む `_wrld_<uuid>` 付き形式 (現状の主流)。
+        let got = parse_vrchat_filename(
+            "VRChat_2026-05-10_15-22-25.964_2560x1440_wrld_9b986af2-0786-48e7-a08d-157cf428f6ab.png",
+        );
+
+        assert_eq!(
+            got,
+            Some(VRChatPhotoMeta {
+                taken_naive_local: nd_milli(2026, 5, 10, 15, 22, 25, 964),
+                resolution: Some((2560, 1440)),
+                world_id: Some("wrld_9b986af2-0786-48e7-a08d-157cf428f6ab".into()),
             })
         );
     }
