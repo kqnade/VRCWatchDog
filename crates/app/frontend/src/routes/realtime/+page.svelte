@@ -1,29 +1,26 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { Bell, MapPin, Pause, Play, Radio, Trash2, Users, Video } from 'lucide-svelte';
+  import { MapPin, Pause, Play, Radio, Trash2, Users } from 'lucide-svelte';
   import { getRealtimeState } from '$lib/api/commands';
   import { onLiveLogEvent } from '$lib/api/events';
   import { i18n } from '$lib/i18n/use_t.svelte';
+  import { session, REALTIME_LOG_MAX } from '$lib/state/session.svelte';
   import Badge from '$lib/ui/Badge.svelte';
   import Button from '$lib/ui/Button.svelte';
   import Card from '$lib/ui/Card.svelte';
   import PageHeader from '$lib/ui/PageHeader.svelte';
   import type { LiveLogEvent } from '$lib/api/types';
 
-  const RING_SIZE = 200;
-  let events = $state<LiveLogEvent[]>([]);
+  // currentWorld / presence は page-local + mount で re-seed (= ページ移動で更新)。
+  // log feed (events) は session.realtimeEventLog から読む (= ページ遷移しても残る)。
   let currentWorldName = $state<string | null>(null);
   let currentWorldId = $state<string | null>(null);
   let currentInstanceId = $state<string | null>(null);
   let presentPlayers = $state<string[]>([]);
-  let isPaused = $state(false);
 
-  function pushEvent(ev: LiveLogEvent): void {
-    events = [ev, ...events].slice(0, RING_SIZE);
-  }
-
-  function applyEvent(ev: LiveLogEvent): void {
-    if (!isPaused) pushEvent(ev);
+  function applyEventForState(ev: LiveLogEvent): void {
+    // events 配列への push は layout の listener が session に対して行うため、
+    // ここでは state (currentWorld / presence) のみ更新する。
     switch (ev.kind) {
       case 'worldEntering':
         currentWorldName = ev.worldName;
@@ -76,15 +73,10 @@
     }
   }
 
-  function clearLog(): void {
-    events = [];
-  }
-
   onMount(() => {
     let unlisten: (() => void) | undefined;
     // Seed: app 起動時に既に VRChat 動作中だった場合、catch-up 中の LiveLogEvent は
-    // listener attach 前に流れているので、現在の active visit を DB から pull して
-    // 「いまこのワールドに居る」状態を初期表示する。
+    // listener attach 前に流れているので、現在の active visit を DB から pull する。
     getRealtimeState()
       .then((s) => {
         if (s.currentWorld) {
@@ -97,7 +89,9 @@
         }
       })
       .catch(() => {});
-    onLiveLogEvent(applyEvent).then((u) => {
+    // page-local listener: currentWorld / presence のみ更新。
+    // events array への append は layout の listener が session に対して実施。
+    onLiveLogEvent(applyEventForState).then((u) => {
       unlisten = u;
     });
     return () => unlisten?.();
@@ -106,7 +100,10 @@
 
 <PageHeader
   title={i18n.t('realtimeTitle')}
-  description={i18n.t('photosCountFormat', { count: events.length, max: RING_SIZE })}
+  description={i18n.t('photosCountFormat', {
+    count: session.realtimeEventLog.length,
+    max: REALTIME_LOG_MAX,
+  })}
 />
 
 <div class="mb-4 grid gap-4 lg:grid-cols-2">
@@ -166,24 +163,24 @@
         <h2 class="text-sm font-semibold">{i18n.t('realtimeFeedHeading')}</h2>
       </div>
       <div class="flex items-center gap-1">
-        <Button variant="ghost" size="sm" onclick={() => (isPaused = !isPaused)}>
-          {#if isPaused}
+        <Button variant="ghost" size="sm" onclick={() => session.toggleRealtimePause()}>
+          {#if session.realtimePaused}
             <Play size={12} />{i18n.t('realtimeResumeBtn')}
           {:else}
             <Pause size={12} />{i18n.t('realtimePauseBtn')}
           {/if}
         </Button>
-        <Button variant="ghost" size="sm" onclick={clearLog}>
+        <Button variant="ghost" size="sm" onclick={() => session.clearRealtimeLog()}>
           <Trash2 size={12} />{i18n.t('realtimeClearBtn')}
         </Button>
       </div>
     </div>
   {/snippet}
-  {#if events.length === 0}
+  {#if session.realtimeEventLog.length === 0}
     <p class="py-6 text-center text-sm text-muted-foreground">{i18n.t('realtimeWaiting')}</p>
   {:else}
     <ul class="-mx-5 -my-4 max-h-[60vh] divide-y divide-border overflow-y-auto">
-      {#each events as ev, i (i + ev.naiveLocal + ev.kind)}
+      {#each session.realtimeEventLog as ev, i (i + ev.naiveLocal + ev.kind)}
         <li class="flex items-center gap-3 px-5 py-1.5 text-xs">
           <span class="shrink-0 font-mono text-[10px] text-muted-foreground">{ev.naiveLocal}</span>
           <Badge variant={badgeVariant(ev.kind)}>{ev.kind}</Badge>

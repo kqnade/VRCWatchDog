@@ -5,7 +5,12 @@
   import { page } from '$app/stores';
   import { Activity, History, Image, LayoutDashboard, Radio, Settings as SettingsIcon, User, Video } from 'lucide-svelte';
   import { getInitialWarnings, getSelfPlayer, getSettings, getThumbProgress } from '$lib/api/commands';
-  import { onHealthStatus, onOneDriveWarning, onSettingsCorrupt } from '$lib/api/events';
+  import {
+    onHealthStatus,
+    onLiveLogEvent,
+    onOneDriveWarning,
+    onSettingsCorrupt,
+  } from '$lib/api/events';
   import { i18n } from '$lib/i18n/use_t.svelte';
   import { session } from '$lib/state/session.svelte';
   import { applyTheme } from '$lib/theme.svelte';
@@ -66,6 +71,10 @@
     onOneDriveWarning((p) => {
       session.onedrive = p;
     }).then((u) => unlistens.push(u));
+    // realtime log buffer は layout で常時受信して session に積む。
+    // currentWorld / presence は /realtime ページ側で別 listener (mount 時 re-seed) が
+    // 担当するので、ここは log の append だけに専念。
+    onLiveLogEvent((p) => session.pushRealtimeLog(p)).then((u) => unlistens.push(u));
 
     getInitialWarnings()
       .then((w) => {
