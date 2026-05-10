@@ -11,6 +11,7 @@
 )]
 
 pub mod bootstrap;
+pub mod commands;
 pub mod paths;
 pub mod state;
 
@@ -66,11 +67,22 @@ pub fn run() {
     // Step 9: window-state を保存/復元。
     let window_state = tauri_plugin_window_state::Builder::default().build();
 
+    // Rust 側で `app.opener().open_path()` を使うために register。capability 側で
+    // opener:* perm は付与しない (= JS から `plugin:opener|open_path` は呼べない)。
+    let opener = tauri_plugin_opener::init();
+
     tauri::Builder::default()
         .plugin(single_instance)
         .plugin(window_state)
         .plugin(autostart)
+        .plugin(opener)
         .manage(bootstrap.state)
+        .invoke_handler(tauri::generate_handler![
+            commands::open_photo,
+            commands::open_photo_folder,
+            commands::get_settings,
+            commands::save_settings,
+        ])
         .setup(|app| {
             // Bootstrap で検出した警告をここで emit する (event listener が貼られた
             // 直後に届くよう setup 内で投げる)。

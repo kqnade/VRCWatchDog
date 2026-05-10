@@ -32,6 +32,12 @@ tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-single-instance = "2"
 tauri-plugin-window-state = "2"
 tauri-plugin-autostart = "2"
+# tauri-plugin-opener は **Rust 側 `app.opener().open_path()` のために** だけ register
+# する。capabilities/default.json では opener:* perm を意図的に外しており、JS から
+# `invoke('plugin:opener|open_path', ...)` は呼べない (plan §7 を新 plugin で実装)。
+# 原本写真の open は Rust の commands.rs が path traversal validation 後に呼ぶ唯一のパス。
+# (旧 tauri-plugin-shell::Shell::open は Tauri 2.4 で deprecated → opener に分離された)
+tauri-plugin-opener = "2"
 vrcwatchdog-core = { path = "../core" }
 tokio.workspace = true
 sqlx.workspace = true
