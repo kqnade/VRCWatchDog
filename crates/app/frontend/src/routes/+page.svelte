@@ -24,6 +24,24 @@
   let health = $state<HealthStatus | null>(null);
   let loadError = $state<string | null>(null);
 
+  // health の level に応じた border 色 class。Tailwind は data-* attribute selector を
+  // 直接書きづらいので $derived + class binding で表現する。
+  const healthBorderClass = $derived(
+    health?.level === 'degraded'
+      ? 'border-destructive'
+      : health?.level === 'warning'
+        ? 'border-warning'
+        : 'border-border'
+  );
+
+  const levelTextClass = $derived(
+    health?.level === 'degraded'
+      ? 'text-destructive'
+      : health?.level === 'warning'
+        ? 'text-warning-foreground'
+        : 'text-success'
+  );
+
   // 1024 で 4 段に丸めて B/KB/MB/GB 表記。健全運用なら DB は MB オーダー。
   function formatBytes(n: number): string {
     if (n <= 0) return '—';
@@ -42,7 +60,6 @@
     let unlistenOneDrive: (() => void) | undefined;
     let unlistenHealth: (() => void) | undefined;
 
-    // 起動後に新規発生する警告 (再 corrupt 等) と health status の listener を貼る。
     onSettingsCorrupt((p) => {
       settingsCorrupt = p;
     }).then((u) => {
@@ -59,18 +76,15 @@
       unlistenHealth = u;
     });
 
-    // 起動時に Bootstrap が検出した警告を pull (race 回避)。
     getInitialWarnings()
       .then((w) => {
         if (w.settingsCorrupt) settingsCorrupt = w.settingsCorrupt;
         if (w.dbSyncRisk) onedrive = w.dbSyncRisk;
       })
       .catch((e: unknown) => {
-        // 取得失敗は致命ではない (event 経由でも届く可能性は残る)
         console.error('getInitialWarnings failed:', e);
       });
 
-    // 初期 settings を取得 (失敗してもアプリは続行可能)。
     getSettings()
       .then((s) => {
         settings = s;
@@ -87,190 +101,89 @@
   });
 </script>
 
-<main>
-  <h1>VRCWatchDog</h1>
-  <p class="subtitle">Phase 5e — log_watcher + projector + health emitter wired.</p>
+<main class="mx-auto min-h-screen max-w-3xl p-8">
+  <h1 class="mb-1 text-2xl font-semibold">VRCWatchDog</h1>
+  <p class="mb-6 text-sm opacity-60">
+    Phase 5g — Tailwind v4 + semantic theme tokens.
+  </p>
 
-  <section class="health" data-level={health?.level ?? 'unknown'}>
-    <h2>Health</h2>
+  <section class="mb-4 rounded-md border bg-card p-4 {healthBorderClass}">
+    <h2 class="mb-2 text-lg font-medium opacity-85">Health</h2>
     {#if health}
-      <div class="metrics">
-        <div class="metric">
-          <span class="label">Level</span>
-          <span class="value level-{health.level}">{health.level}</span>
+      <div
+        class="mt-1 grid gap-x-4 gap-y-2"
+        style="grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));"
+      >
+        <div class="flex flex-col">
+          <span class="text-xs uppercase tracking-wider opacity-55">Level</span>
+          <span class="font-mono text-base {levelTextClass}">{health.level}</span>
         </div>
-        <div class="metric">
-          <span class="label">Backlog</span>
-          <span class="value">{health.backlogSize.toLocaleString()}</span>
+        <div class="flex flex-col">
+          <span class="text-xs uppercase tracking-wider opacity-55">Backlog</span>
+          <span class="font-mono text-base">{health.backlogSize.toLocaleString()}</span>
         </div>
-        <div class="metric">
-          <span class="label">DB size</span>
-          <span class="value">{formatBytes(health.dbSizeBytes)}</span>
+        <div class="flex flex-col">
+          <span class="text-xs uppercase tracking-wider opacity-55">DB size</span>
+          <span class="font-mono text-base">{formatBytes(health.dbSizeBytes)}</span>
         </div>
-        <div class="metric">
-          <span class="label">Lag (s)</span>
-          <span class="value">{health.projectorLagSec}</span>
+        <div class="flex flex-col">
+          <span class="text-xs uppercase tracking-wider opacity-55">Lag (s)</span>
+          <span class="font-mono text-base">{health.projectorLagSec}</span>
         </div>
-        <div class="metric">
-          <span class="label">Free disk</span>
-          <span class="value">{formatBytes(health.freeDiskBytes)}</span>
+        <div class="flex flex-col">
+          <span class="text-xs uppercase tracking-wider opacity-55">Free disk</span>
+          <span class="font-mono text-base">{formatBytes(health.freeDiskBytes)}</span>
         </div>
       </div>
     {:else}
-      <p class="dim">backend からの最初の health-status を待っています…</p>
+      <p class="text-sm opacity-55">backend からの最初の health-status を待っています…</p>
     {/if}
   </section>
 
   {#if settingsCorrupt}
-    <section class="warn">
-      <strong>設定ファイルが破損しています</strong>
-      <p>バックアップ: <code>{settingsCorrupt.backupPath}</code></p>
-      <p>理由: {settingsCorrupt.reason}</p>
+    <section
+      class="mb-4 rounded border border-warning bg-[var(--color-warning-bg)] px-4 py-3"
+    >
+      <strong class="text-warning-foreground">設定ファイルが破損しています</strong>
+      <p class="mt-1 text-sm">
+        バックアップ:
+        <code class="rounded bg-muted px-1.5 py-0.5 font-mono text-sm"
+          >{settingsCorrupt.backupPath}</code
+        >
+      </p>
+      <p class="mt-1 text-sm">理由: {settingsCorrupt.reason}</p>
     </section>
   {/if}
 
   {#if onedrive}
-    <section class="warn">
-      <strong>DB が同期下にあります ({onedrive.detectedIndicator})</strong>
-      <p>パス: <code>{onedrive.dbPath}</code></p>
-      <p>SQLite WAL の同期競合を避けるため、`%LOCALAPPDATA%` 配下への配置を推奨します。</p>
+    <section
+      class="mb-4 rounded border border-warning bg-[var(--color-warning-bg)] px-4 py-3"
+    >
+      <strong class="text-warning-foreground"
+        >DB が同期下にあります ({onedrive.detectedIndicator})</strong
+      >
+      <p class="mt-1 text-sm">
+        パス:
+        <code class="rounded bg-muted px-1.5 py-0.5 font-mono text-sm">{onedrive.dbPath}</code>
+      </p>
+      <p class="mt-1 text-sm">
+        SQLite WAL の同期競合を避けるため、`%LOCALAPPDATA%` 配下への配置を推奨します。
+      </p>
     </section>
   {/if}
 
   <section>
-    <h2>Settings</h2>
+    <h2 class="mb-2 mt-6 text-lg font-medium opacity-85">Settings</h2>
     {#if loadError}
-      <p class="err">取得失敗: {loadError}</p>
+      <p class="text-destructive">取得失敗: {loadError}</p>
     {:else if settings}
-      <pre>{JSON.stringify(settings, null, 2)}</pre>
+      <pre class="overflow-x-auto rounded bg-muted p-3 font-mono text-sm">{JSON.stringify(
+          settings,
+          null,
+          2
+        )}</pre>
     {:else}
-      <p class="dim">読込中…</p>
+      <p class="text-sm opacity-55">読込中…</p>
     {/if}
   </section>
 </main>
-
-<style>
-  :global(html),
-  :global(body) {
-    margin: 0;
-    padding: 0;
-    background: #0b0b0c;
-    color: #e5e5e5;
-    font-family:
-      system-ui,
-      -apple-system,
-      'Segoe UI',
-      sans-serif;
-  }
-
-  main {
-    padding: 2rem;
-    min-height: 100vh;
-    max-width: 720px;
-    margin: 0 auto;
-  }
-
-  h1 {
-    margin: 0 0 0.25rem 0;
-    font-size: 1.75rem;
-    font-weight: 600;
-  }
-
-  h2 {
-    margin: 1.5rem 0 0.5rem 0;
-    font-size: 1.1rem;
-    font-weight: 500;
-    opacity: 0.85;
-  }
-
-  .subtitle {
-    margin: 0 0 1.5rem 0;
-    opacity: 0.6;
-    font-size: 0.9rem;
-  }
-
-  .health {
-    background: #131418;
-    border: 1px solid #2a2c33;
-    border-radius: 6px;
-    padding: 0.75rem 1rem 1rem;
-    margin: 0 0 1rem 0;
-  }
-  .health[data-level='warning'] {
-    border-color: #cd9f3a;
-  }
-  .health[data-level='degraded'] {
-    border-color: #ff6b6b;
-  }
-
-  .metrics {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
-    gap: 0.5rem 1rem;
-    margin-top: 0.25rem;
-  }
-  .metric {
-    display: flex;
-    flex-direction: column;
-  }
-  .metric .label {
-    font-size: 0.7rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    opacity: 0.55;
-  }
-  .metric .value {
-    font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
-    font-size: 1rem;
-  }
-  .level-healthy {
-    color: #6ed28a;
-  }
-  .level-warning {
-    color: #f1c40f;
-  }
-  .level-degraded {
-    color: #ff6b6b;
-  }
-
-  .dim {
-    opacity: 0.55;
-    font-size: 0.9rem;
-    margin: 0;
-  }
-
-  .warn {
-    background: #2a1f0f;
-    border: 1px solid #cd9f3a;
-    border-radius: 4px;
-    padding: 0.75rem 1rem;
-    margin: 0 0 1rem 0;
-  }
-
-  .warn strong {
-    color: #f1c40f;
-  }
-
-  .warn p {
-    margin: 0.25rem 0 0 0;
-    font-size: 0.9rem;
-  }
-
-  .err {
-    color: #ff6b6b;
-  }
-
-  code,
-  pre {
-    background: #181a1d;
-    border-radius: 3px;
-    padding: 0.15rem 0.35rem;
-    font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
-    font-size: 0.85rem;
-  }
-
-  pre {
-    padding: 0.75rem;
-    overflow-x: auto;
-  }
-</style>

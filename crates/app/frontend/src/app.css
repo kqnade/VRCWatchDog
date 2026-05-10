@@ -6,11 +6,48 @@
 
 /* dark variant: shadcn-svelte の dark theme を `.dark` クラス起点で有効化する。
  * Phase 5d で全体を default-dark にしているので、root に `.dark` を付与する想定。
- * 詳細は次 commit で +layout.svelte に <html class="dark"> を仕込んで切り替える。 */
+ * settings.theme で切替えるのは Phase 7。 */
 @custom-variant dark (&:where(.dark, .dark *));
 
-/* Phase 5d/5e の inline style に揃えた最低限の base color。Tailwind の bg-/text- で
- * 上書きできる前提。次 commit で @theme へ移して shadcn-svelte と整合させる。 */
+/* Design tokens (shadcn-svelte 命名規約に整合)。
+ *
+ * `@theme` は Tailwind v4 のテーマ機構: ここで宣言した CSS variable は同じ名前で
+ * `bg-*` / `text-*` / `border-*` などの utility class を自動生成する。
+ * 例: `--color-background: ...` → `bg-background`, `text-background`, `border-background`。
+ *
+ * shadcn-svelte 公式の命名規約 (background / foreground / card / muted / destructive 等)
+ * をそのまま採用しているので、後で `pnpm dlx shadcn-svelte@latest add` で入れた
+ * components はトークンの再定義なしにそのまま動く。
+ *
+ * warning は shadcn 標準には無いが VRCWatchDog 固有の警告 UI (settings corrupt /
+ * OneDrive risk / DB backpressure) で頻用するので明示的に追加。 */
+@theme {
+  --color-background: #0b0b0c;
+  --color-foreground: #e5e5e5;
+
+  --color-card: #131418;
+  --color-card-foreground: #e5e5e5;
+
+  --color-border: #2a2c33;
+  --color-input: #2a2c33;
+  --color-ring: #2a2c33;
+
+  --color-muted: #181a1d;
+  --color-muted-foreground: #888888;
+
+  --color-destructive: #ff6b6b;
+  --color-destructive-foreground: #fff5f5;
+
+  /* shadcn 標準には無い VRCWatchDog 固有 token */
+  --color-warning: #cd9f3a;
+  --color-warning-foreground: #f1c40f;
+  --color-warning-bg: #2a1f0f;
+
+  --color-success: #6ed28a;
+}
+
+/* base layer: 上記 token を `html` / `body` に適用。Tailwind の Preflight が body
+ * を margin:0 にするので、追加 reset は必要に応じて。 */
 @layer base {
   :root {
     color-scheme: dark;
@@ -18,10 +55,8 @@
 
   html,
   body {
-    margin: 0;
-    padding: 0;
-    background: #0b0b0c;
-    color: #e5e5e5;
+    background: var(--color-background);
+    color: var(--color-foreground);
     font-family:
       system-ui,
       -apple-system,
