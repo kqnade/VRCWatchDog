@@ -274,6 +274,86 @@ async fn finalize_left_only(
     Ok(())
 }
 
+/// `finalize_active_on_process_exit` の戻り値。actor の log/metrics 用。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExitFinalizeOutcome {
+    /// アクティブ visit なし。何もしなかった。
+    NoActive,
+    /// `Pending` だった visit を `ClosedWithoutJoin` に遷移しつつ left_utc を埋めた。
+    ClosedPendingAsWithoutJoin { visit_id: i64 },
+    /// `Resolved` の visit に left_utc を stamp しただけ (state はそのまま)。
+    StampedLeftUtcOnResolved { visit_id: i64 },
+}
+
+/// VRChat プロセスが終了したとき、現在 active な visit を finalize する。
+///
+/// アクティブ判定: `resolution_state IN ('Pending', 'Resolved')` かつ `left_utc IS NULL`、
+/// `joined_utc DESC` で 1 件 (= 最新の未閉鎖)。
+///
+/// 状態遷移:
+/// - `Pending` → `ClosedWithoutJoin` + left_utc 設定 (Joining wrld が来ないまま落ちた)
+/// - `Resolved` → state そのまま + left_utc 設定 (普通に世界にいた状態で exit)
+///
+/// `Conflict` / `MissingJoin` / `ClosedWithoutJoin` は active 候補に含めない (既に
+/// 何らかの形で確定済)。
+///
+/// plan §2: 「log catch-up 完了後の finalization event として扱う」 — その判断は
+/// 呼び出し側 (Phase 7.4.2 では bootstrap の coordinator task) の責務。本関数は
+/// 「呼ばれた瞬間に active 1 件を finalize する」純粋に DB レベルの操作だけを行う。
+pub async fn finalize_active_on_process_exit(
+    tx: &mut Transaction<'_, Sqlite>,
+    closed_naive_local: NaiveDateTime,
+    ctx: TimeContext<'_>,
+    prev_utc: Option<DateTime<Utc>>,
+) -> Result<ExitFinalizeOutcome> {
+    let row: Option<(i64, String)> = sqlx::query_as(
+        "SELECT id, resolution_state FROM world_visits
+         WHERE resolution_state IN ('Pending', 'Resolved')
+           AND left_utc IS NULL
+         ORDER BY joined_utc DESC LIMIT 1",
+    )
+    .fetch_optional(&mut **tx)
+    .await?;
+
+    let Some((visit_id, state)) = row else {
+        return Ok(ExitFinalizeOutcome::NoActive);
+    };
+
+    let new_state = if state == "Pending" {
+        "ClosedWithoutJoin"
+    } else {
+        "Resolved" // Resolved のまま、left_utc だけ書く
+    };
+
+    let tz = parse_tz(ctx.tz_id)?;
+    let (utc, offset, res) = resolve_local_to_utc(closed_naive_local, &tz, prev_utc);
+    sqlx::query(
+        "UPDATE world_visits
+         SET resolution_state = ?1,
+             left_naive_local = ?2, left_utc = ?3,
+             left_tz_id = ?4, left_offset_seconds = ?5,
+             left_resolution = ?6, left_tz_source = ?7, left_resolution_confidence = ?8
+         WHERE id = ?9",
+    )
+    .bind(new_state)
+    .bind(fmt_naive(closed_naive_local))
+    .bind(utc.to_rfc3339())
+    .bind(ctx.tz_id)
+    .bind(offset)
+    .bind(res.as_str())
+    .bind(ctx.tz_source)
+    .bind(ctx.resolution_confidence)
+    .bind(visit_id)
+    .execute(&mut **tx)
+    .await?;
+
+    Ok(if state == "Pending" {
+        ExitFinalizeOutcome::ClosedPendingAsWithoutJoin { visit_id }
+    } else {
+        ExitFinalizeOutcome::StampedLeftUtcOnResolved { visit_id }
+    })
+}
+
 /// `list_recent_with_photo_counts` の戻り値要素。activity_history 画面用。
 ///
 /// `photo_count` は `photo_records` を `world_visit_id` で外部結合してカウントしたもの。
@@ -831,5 +911,220 @@ mod tests {
 
         assert!(zero.is_empty());
         assert!(neg.is_empty());
+    }
+
+    // -- finalize_active_on_process_exit (Phase 7.4.2) -------------------------
+
+    /// state / left_utc を 1 行で読む helper。
+    async fn fetch_state_and_left(
+        pool: &sqlx::SqlitePool,
+        id: i64,
+    ) -> (String, Option<DateTime<Utc>>) {
+        let row: (String, Option<DateTime<Utc>>) =
+            sqlx::query_as("SELECT resolution_state, left_utc FROM world_visits WHERE id = ?1")
+                .bind(id)
+                .fetch_one(pool)
+                .await
+                .unwrap();
+        row
+    }
+
+    #[tokio::test]
+    async fn finalize_active_on_process_exit_returns_no_active_for_clean_db() {
+        let (pool, _dir) = fresh_pool().await;
+        let mut tx = pool.begin().await.unwrap();
+
+        let outcome =
+            finalize_active_on_process_exit(&mut tx, nd(2026, 5, 9, 22, 0, 0), ctx(), None)
+                .await
+                .unwrap();
+
+        assert_eq!(outcome, ExitFinalizeOutcome::NoActive);
+    }
+
+    #[tokio::test]
+    async fn finalize_active_on_process_exit_promotes_pending_to_closed_without_join() {
+        // Arrange: Pending な visit を 1 件作る (Joining wrld を受けないまま VRChat exit)
+        let (pool, _dir) = fresh_pool().await;
+        let mut tx = pool.begin().await.unwrap();
+        let pf = seed_pf(&mut tx).await;
+        let raw = seed_raw(
+            &mut tx,
+            pf,
+            0,
+            LogEvent::RoomEntering {
+                world_name: "A".into(),
+            },
+        )
+        .await;
+        let visit_id = insert_pending(&mut tx, raw, "A", nd(2026, 5, 9, 21, 0, 0), ctx(), None)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        // Act
+        let mut tx = pool.begin().await.unwrap();
+        let outcome =
+            finalize_active_on_process_exit(&mut tx, nd(2026, 5, 9, 22, 0, 0), ctx(), None)
+                .await
+                .unwrap();
+        tx.commit().await.unwrap();
+
+        // Assert
+        assert_eq!(
+            outcome,
+            ExitFinalizeOutcome::ClosedPendingAsWithoutJoin { visit_id }
+        );
+        let (state, left_utc) = fetch_state_and_left(&pool, visit_id).await;
+        assert_eq!(state, "ClosedWithoutJoin");
+        assert!(left_utc.is_some(), "left_utc が埋まる");
+    }
+
+    #[tokio::test]
+    async fn finalize_active_on_process_exit_stamps_left_utc_on_resolved_without_changing_state() {
+        // Arrange: Pending → Resolved まで進めた visit (joining 来た) で VRChat exit
+        let (pool, _dir) = fresh_pool().await;
+        let mut tx = pool.begin().await.unwrap();
+        let pf = seed_pf(&mut tx).await;
+        let raw = seed_raw(
+            &mut tx,
+            pf,
+            0,
+            LogEvent::RoomEntering {
+                world_name: "A".into(),
+            },
+        )
+        .await;
+        let visit_id = insert_pending(&mut tx, raw, "A", nd(2026, 5, 9, 21, 0, 0), ctx(), None)
+            .await
+            .unwrap();
+        let resolved = resolve_pending_with_world(&mut tx, "wrld_xxx", "instance_yyy")
+            .await
+            .unwrap();
+        assert_eq!(resolved, Some(visit_id));
+        tx.commit().await.unwrap();
+
+        // Act
+        let mut tx = pool.begin().await.unwrap();
+        let outcome =
+            finalize_active_on_process_exit(&mut tx, nd(2026, 5, 9, 22, 0, 0), ctx(), None)
+                .await
+                .unwrap();
+        tx.commit().await.unwrap();
+
+        // Assert
+        assert_eq!(
+            outcome,
+            ExitFinalizeOutcome::StampedLeftUtcOnResolved { visit_id }
+        );
+        let (state, left_utc) = fetch_state_and_left(&pool, visit_id).await;
+        assert_eq!(state, "Resolved", "state は Resolved のまま");
+        assert!(left_utc.is_some());
+    }
+
+    #[tokio::test]
+    async fn finalize_active_on_process_exit_targets_only_the_latest_active_visit() {
+        // Arrange: 古い visit は finalize 済 (next_entering で MissingJoin に)、
+        // 新しい visit が Pending → これだけ finalize 対象になる
+        let (pool, _dir) = fresh_pool().await;
+        let mut tx = pool.begin().await.unwrap();
+        let pf = seed_pf(&mut tx).await;
+        let raw1 = seed_raw(
+            &mut tx,
+            pf,
+            0,
+            LogEvent::RoomEntering {
+                world_name: "old".into(),
+            },
+        )
+        .await;
+        let raw2 = seed_raw(
+            &mut tx,
+            pf,
+            1,
+            LogEvent::RoomEntering {
+                world_name: "new".into(),
+            },
+        )
+        .await;
+        let v_old = insert_pending(&mut tx, raw1, "old", nd(2026, 5, 9, 20, 0, 0), ctx(), None)
+            .await
+            .unwrap();
+        // 次の RoomEntering で v_old を MissingJoin に
+        finalize_for_next_entering(&mut tx, v_old, nd(2026, 5, 9, 21, 0, 0), ctx(), None)
+            .await
+            .unwrap();
+        let v_new = insert_pending(&mut tx, raw2, "new", nd(2026, 5, 9, 21, 0, 0), ctx(), None)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        // Act
+        let mut tx = pool.begin().await.unwrap();
+        let outcome =
+            finalize_active_on_process_exit(&mut tx, nd(2026, 5, 9, 22, 0, 0), ctx(), None)
+                .await
+                .unwrap();
+        tx.commit().await.unwrap();
+
+        // Assert: 新しい方だけが ClosedWithoutJoin に
+        assert_eq!(
+            outcome,
+            ExitFinalizeOutcome::ClosedPendingAsWithoutJoin { visit_id: v_new }
+        );
+        let (state_new, left_new) = fetch_state_and_left(&pool, v_new).await;
+        assert_eq!(state_new, "ClosedWithoutJoin");
+        assert!(left_new.is_some());
+        // 古い方は MissingJoin のまま (finalize_for_next_entering 時に埋めた left_utc は残る)
+        let (state_old, _) = fetch_state_and_left(&pool, v_old).await;
+        assert_eq!(state_old, "MissingJoin", "古い visit は対象外");
+    }
+
+    #[tokio::test]
+    async fn finalize_active_on_process_exit_skips_when_only_inactive_visits_remain() {
+        // Arrange: 既に finalize 済の visit のみ残っている状態
+        let (pool, _dir) = fresh_pool().await;
+        let mut tx = pool.begin().await.unwrap();
+        let pf = seed_pf(&mut tx).await;
+        let raw = seed_raw(
+            &mut tx,
+            pf,
+            0,
+            LogEvent::RoomEntering {
+                world_name: "A".into(),
+            },
+        )
+        .await;
+        let raw2 = seed_raw(
+            &mut tx,
+            pf,
+            1,
+            LogEvent::RoomEntering {
+                world_name: "B".into(),
+            },
+        )
+        .await;
+        let v = insert_pending(&mut tx, raw, "A", nd(2026, 5, 9, 20, 0, 0), ctx(), None)
+            .await
+            .unwrap();
+        finalize_for_next_entering(&mut tx, v, nd(2026, 5, 9, 21, 0, 0), ctx(), None)
+            .await
+            .unwrap();
+        // raw2 は visit を作らずに置いておく (finalize 候補にならない)
+        let _ = raw2;
+        tx.commit().await.unwrap();
+
+        // Act
+        let mut tx = pool.begin().await.unwrap();
+        let outcome =
+            finalize_active_on_process_exit(&mut tx, nd(2026, 5, 9, 22, 0, 0), ctx(), None)
+                .await
+                .unwrap();
+
+        assert_eq!(
+            outcome,
+            ExitFinalizeOutcome::NoActive,
+            "MissingJoin / ClosedWithoutJoin は active 候補に含めない"
+        );
     }
 }

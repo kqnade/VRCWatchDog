@@ -5473,6 +5473,7 @@ name = "vrcwatchdog-app"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "chrono-tz",
  "iana-time-zone",
  "serde",

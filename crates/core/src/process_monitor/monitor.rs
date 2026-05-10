@@ -9,6 +9,7 @@
 use std::time::Duration;
 
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
+use tokio::sync::mpsc;
 
 use super::detect::{detect_transition, ProcessTransition};
 
@@ -47,13 +48,26 @@ pub fn is_vrchat_process_running(system: &System, process_name: &str) -> bool {
 /// VRChat プロセスを監視する actor。
 ///
 /// `run()` は無限ループ。stop は外部 (JoinSet::abort 等) で行う。
+/// `sender` を与えれば各遷移を送出する: bootstrap の coordinator が `Stopped` を受信して
+/// world_visits の finalize を実行する想定 (Phase 7.4.2)。
 pub struct VRChatProcessMonitor {
     config: VRChatProcessMonitorConfig,
+    sender: Option<mpsc::Sender<ProcessTransition>>,
 }
 
 impl VRChatProcessMonitor {
     pub fn new(config: VRChatProcessMonitorConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            sender: None,
+        }
+    }
+
+    /// 遷移送信用の sender を設定する builder。`run()` 内で `Started` / `Stopped` を
+    /// `try_send` する (`NoChange` は送らない)。capacity は呼出側で決める (推奨 8)。
+    pub fn with_sender(mut self, sender: mpsc::Sender<ProcessTransition>) -> Self {
+        self.sender = Some(sender);
+        self
     }
 
     /// メインループ。`poll_interval` ごとに sysinfo を refresh し、`detect_transition`
@@ -89,19 +103,33 @@ impl VRChatProcessMonitor {
             );
             let now_running = is_vrchat_process_running(&system, &self.config.process_name);
 
-            match detect_transition(prev_running, now_running) {
+            let transition = detect_transition(prev_running, now_running);
+            match transition {
                 ProcessTransition::Started => {
                     tracing::info!(process = %self.config.process_name, "VRChat started");
                 }
                 ProcessTransition::Stopped => {
-                    // Phase 7.4.2 で projector finalize を呼ぶ予定の hook ポイント。
-                    // 現時点では log のみ (ClosedWithoutJoin 遷移はまだ起きない)。
                     tracing::info!(
                         process = %self.config.process_name,
-                        "VRChat stopped (ClosedWithoutJoin finalization pending in 7.4.2)",
+                        "VRChat stopped (signaling coordinator for finalize)",
                     );
                 }
                 ProcessTransition::NoChange => {}
+            }
+            // sender が居れば Started/Stopped を送出 (NoChange は捨てる)。
+            // try_send で receiver 不在 / full は warn にとどめ loop は止めない。
+            if matches!(
+                transition,
+                ProcessTransition::Started | ProcessTransition::Stopped
+            ) {
+                if let Some(s) = &self.sender {
+                    if let Err(e) = s.try_send(transition) {
+                        tracing::warn!(
+                            error = %e,
+                            "process_monitor: transition channel full or closed",
+                        );
+                    }
+                }
             }
             prev_running = now_running;
         }

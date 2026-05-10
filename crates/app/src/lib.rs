@@ -19,17 +19,23 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use chrono::Local;
 use sqlx::SqlitePool;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::task::JoinSet;
 use tracing_subscriber::EnvFilter;
+use vrcwatchdog_core::db::repo::world_visits::{
+    self, ExitFinalizeOutcome, TimeContext as VisitTimeContext,
+};
 use vrcwatchdog_core::health::collect_health;
 use vrcwatchdog_core::ipc::events::names;
 use vrcwatchdog_core::log_watcher::{
     LogWatcherActor, NotifyEventSource, RealFsProbe, WatcherConfig,
 };
 use vrcwatchdog_core::photo_scanner::{NotifyPhotoSource, PhotoScannerActor, PhotoScannerConfig};
-use vrcwatchdog_core::process_monitor::{VRChatProcessMonitor, VRChatProcessMonitorConfig};
+use vrcwatchdog_core::process_monitor::{
+    ProcessTransition, VRChatProcessMonitor, VRChatProcessMonitorConfig,
+};
 use vrcwatchdog_core::projector::project_batch;
 use vrcwatchdog_core::settings::Settings;
 use vrcwatchdog_core::thumb_writer::{ThumbWriterActor, ThumbWriterConfig};
@@ -204,11 +210,35 @@ async fn spawn_background_tasks(
     // 既存写真がスキャン済みでも、thumb 未生成なら拾い続ける。
     spawn_thumb_writer(&mut tasks, pool.clone(), thumb_dir);
 
-    // process_monitor: VRChat プロセスを 2s 間隔で polling。Phase 7.4.1 では
-    // 遷移を log に出すだけで、ClosedWithoutJoin への finalize は 7.4.2 で別 commit。
-    let monitor = VRChatProcessMonitor::new(VRChatProcessMonitorConfig::default());
+    // process_monitor + finalize coordinator (Phase 7.4.2):
+    // monitor は 2s 間隔で polling、Started/Stopped を mpsc で送出。
+    // coordinator は Stopped を受信して world_visits を finalize する。
+    // capacity 8: Stopped/Started が高頻度で来ることはない (= 起動/終了時に 1 件)。
+    let (proc_tx, mut proc_rx) = tokio::sync::mpsc::channel::<ProcessTransition>(8);
+    let monitor =
+        VRChatProcessMonitor::new(VRChatProcessMonitorConfig::default()).with_sender(proc_tx);
     tasks.spawn(async move { monitor.run().await });
-    tracing::info!("process_monitor spawned");
+
+    let pool_for_finalize = pool.clone();
+    let tz_for_finalize = resolve_local_tz();
+    tasks.spawn(async move {
+        while let Some(transition) = proc_rx.recv().await {
+            if !matches!(transition, ProcessTransition::Stopped) {
+                continue;
+            }
+            // VRChat exit を観測したので、active な world_visit を 1 件 finalize。
+            // plan §2 「log catch-up 完了後の finalize」 を厳密に守るには projector の
+            // backlog drain を待つべきだが、現状は projector が常に poll loop で drain
+            // しているので、process exit から数秒で catch-up が完了する想定。
+            // ここでは即 finalize でも実害は小さい (Joining が遅延して active 中なら
+            // ClosedWithoutJoin 化、Resolved なら left_utc stamp のみ)。
+            if let Err(e) = finalize_active_visit_on_exit(&pool_for_finalize, tz_for_finalize).await
+            {
+                tracing::warn!(error = %e, "process_exit finalize failed");
+            }
+        }
+    });
+    tracing::info!("process_monitor + finalize coordinator spawned");
 
     // projector: 常時 spawn。raw が無くても loop は回り続け (no-op)、
     // 後から log_watcher が事象を流し込んだ時点で processing が始まる。
@@ -271,6 +301,40 @@ fn spawn_thumb_writer(tasks: &mut JoinSet<()>, pool: SqlitePool, thumb_dir: Path
         }
     });
     tracing::info!(thumb_dir = %thumb_dir.display(), "thumb_writer spawned");
+}
+
+/// VRChat process exit を受けて active world_visit を finalize する coordinator helper。
+///
+/// 1 transaction で `world_visits::finalize_active_on_process_exit` を実行し、
+/// 結果を log に落とす。Pending → ClosedWithoutJoin / Resolved → left_utc stamp の
+/// 振り分けは repo 側が判断。
+async fn finalize_active_visit_on_exit(
+    pool: &SqlitePool,
+    tz: chrono_tz::Tz,
+) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let now_local = Local::now().naive_local();
+    let ctx = VisitTimeContext {
+        tz_id: tz.name(),
+        tz_source: "CapturedRealtime",
+        resolution_confidence: "High",
+    };
+    let mut tx = pool.begin().await?;
+    let outcome = world_visits::finalize_active_on_process_exit(&mut tx, now_local, ctx, None)
+        .await
+        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+    tx.commit().await?;
+    match outcome {
+        ExitFinalizeOutcome::NoActive => {
+            tracing::info!("process_exit: no active visit to finalize");
+        }
+        ExitFinalizeOutcome::ClosedPendingAsWithoutJoin { visit_id } => {
+            tracing::info!(visit_id, "process_exit: Pending → ClosedWithoutJoin");
+        }
+        ExitFinalizeOutcome::StampedLeftUtcOnResolved { visit_id } => {
+            tracing::info!(visit_id, "process_exit: Resolved left_utc stamped");
+        }
+    }
+    Ok(())
 }
 
 /// OS から local timezone を取得して `chrono_tz::Tz` に変換する。
