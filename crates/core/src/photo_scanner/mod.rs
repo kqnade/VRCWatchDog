@@ -12,5 +12,7 @@
 //! - 写真原本の path 保護は plan §7 (asset:// で公開しない、open_photo command 経由のみ)
 
 pub mod filename;
+pub mod visit_matcher;
 
 pub use filename::{parse_vrchat_filename, VRChatPhotoMeta};
+pub use visit_matcher::{match_photo_to_visit, WorldVisitTimeRange};
