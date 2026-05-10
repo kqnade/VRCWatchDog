@@ -15,53 +15,142 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# 並列化方針 (5 jobs):
+#
+# - clippy と cargo test は test profile が違うため fingerprint が一致せず、同 job 内で
+#   並べても 2 回 build が走る。並列の独立 job にした方が wall time が短い (Windows 側)。
+# - core はビルド時間が小さいので clippy + test を 1 job に統合。同 profile 内の dep 解決
+#   コストを 1 回で済ませる方が、別 job 並列より速いことが多い。
+# - crates/core は cfg(unix)/cfg(windows) で OS 依存を切り分けてあり、Windows API 依存
+#   (windows crate) は [target.'cfg(windows)'.dependencies] gated。core は安価な
+#   ubuntu runner で完結する。Windows-cfg 配下のランタイムテストは CI で走らない (clippy
+#   が compile-check するだけ) — 設計上の合意 tradeoff。
+# - crates/app は Tauri (webview2-com 等 Windows 固有 + tauri-build の Windows Resource)。
+#   Linux build には webkit2gtk 等の追加セットアップが要り、Windows-only NSIS 配布なので
+#   app は windows-latest に閉じ込める。
+# - frontend (svelte-check + vite build) は完全に Node 上、ubuntu で十分。frontend dist
+#   は Windows ジョブでも生成し直す (3 重生成だが artifact 受け渡しで `needs:` の直列化
+#   待ちが発生する方がスケジューリング的に重い場合があるため、重複容認)。
+#
+# キャッシュ方針:
+# - shared-key は **profile/job ごとに分ける**。clippy と test は target/ の中身が異なる
+#   ので同 key を使うと後勝ちで上書きしあい毎回 cold rebuild。
+# - cache-on-failure: true ですべての cache を fail 時にも保存 (次回が cold にならない)。
+# - save-if: main 限定。PR のたびに 3 分超の cache save が走るのを抑える。
+
 jobs:
-  rust:
-    name: Rust + frontend (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest]
+  fmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
+          components: rustfmt
+      - run: cargo fmt --all --check
 
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-
-      # Frontend は cargo より先にビルドしておく。
-      # tauri-build (build.rs) は frontendDist の存在まで強制しないが、
-      # cargo build -p vrcwatchdog-app の生成物が dist を embed する可能性に
-      # 備え、確実に build/ を用意してから cargo を回す。
-      - name: Setup Node
-        uses: actions/setup-node@v4
+  core-linux:
+    name: core clippy + test (ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          node-version: '22'
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: core-linux
+          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # 同 job 内で clippy → test の順。clippy が先に dev/test profile 両方分の dep を
+      # compile してくれるので test の compile はそのキャッシュを引く (同 job 内なら
+      # fingerprint も同期間で安定)。
+      - name: cargo clippy
+        run: cargo clippy -p vrcwatchdog-core --all-targets -- -D warnings
+      - name: cargo test
+        run: cargo test -p vrcwatchdog-core --lib --tests
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+  frontend:
+    name: frontend (svelte-check + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: crates/app/frontend
+    steps:
+      - uses: actions/checkout@v4
+      # pnpm を setup-node より先に。setup-node の cache: 'pnpm' が pnpm bin を要求する。
+      - uses: pnpm/action-setup@v4
         with:
           version: 10
           run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: crates/app/frontend/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - name: pnpm check (svelte-check)
+        run: pnpm check
+      - name: pnpm build (adapter-static SPA)
+        run: pnpm build
 
-      - name: Install frontend deps
+  clippy-app-windows:
+    name: clippy app (windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      # clippy と test で target/ 中身が違うので shared-key を **必ず分ける**。
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: app-windows-clippy
+          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: crates/app/frontend/pnpm-lock.yaml
+      - name: pnpm install (frontend)
         run: pnpm install --frozen-lockfile
         working-directory: crates/app/frontend
-
-      - name: Build frontend
+      - name: pnpm build (frontend dist)
         run: pnpm build
         working-directory: crates/app/frontend
-
-      - name: Format check
-        run: cargo fmt --all --check
-
-      - name: Clippy
+      - name: cargo clippy workspace
         run: cargo clippy --workspace --all-targets -- -D warnings
 
-      - name: Test
-        run: cargo test --workspace --all-targets
+  test-app-windows:
+    name: test app (windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: app-windows-test
+          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: crates/app/frontend/pnpm-lock.yaml
+      - name: pnpm install (frontend)
+        run: pnpm install --frozen-lockfile
+        working-directory: crates/app/frontend
+      - name: pnpm build (frontend dist)
+        run: pnpm build
+        working-directory: crates/app/frontend
+      - name: cargo test app
+        run: cargo test -p vrcwatchdog-app --lib --tests
