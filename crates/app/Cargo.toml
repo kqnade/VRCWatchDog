@@ -1,0 +1,38 @@
+[package]
+name = "vrcwatchdog-app"
+version = "0.0.0"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+# Phase 5d: Tauri shell skeleton.
+# - main.rs is a placeholder that boots Tauri with no plugins / no commands.
+# - 起動順序 (plan §9) や IPC 配線は別 commit で積む。
+# - cargo build -p vrcwatchdog-app と cargo tauri dev でウィンドウが立ち上がる
+#   ところまでが本フェーズのゴール。
+
+[lib]
+name = "vrcwatchdog_app_lib"
+path = "src/lib.rs"
+
+[[bin]]
+name = "vrcwatchdog"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# tauri.conf.json の assetProtocol.enable=true (plan §7) に対応する feature flag。
+# tauri-build はこの feature と conf の allowlist 一致を強制する。
+tauri = { version = "2", features = ["protocol-asset"] }
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true

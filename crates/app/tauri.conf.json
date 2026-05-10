@@ -1,0 +1,44 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "VRCWatchDog",
+  "version": "0.0.0",
+  "identifier": "com.kqnade.vrcwatchdog",
+  "build": {
+    "frontendDist": "../frontend/build",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "pnpm --dir frontend dev",
+    "beforeBuildCommand": "pnpm --dir frontend build"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "VRCWatchDog",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 800,
+        "minHeight": 600,
+        "visible": true,
+        "decorations": true
+      }
+    ],
+    "security": {
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["$LOCALAPPDATA/VRCWatchDog/cache/thumbs/**"]
+      },
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost data: blob:; script-src 'self'; style-src-elem 'self'; style-src-attr 'unsafe-inline'; font-src 'self' asset:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+    }
+  },
+  "bundle": {
+    "active": false,
+    "targets": ["nsis"],
+    "category": "Utility",
+    "icon": [],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
+  }
+}

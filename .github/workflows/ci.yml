@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   rust:
-    name: Rust (${{ matrix.os }})
+    name: Rust + frontend (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -33,6 +33,29 @@ jobs:
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+
+      # Frontend は cargo より先にビルドしておく。
+      # tauri-build (build.rs) は frontendDist の存在まで強制しないが、
+      # cargo build -p vrcwatchdog-app の生成物が dist を embed する可能性に
+      # 備え、確実に build/ を用意してから cargo を回す。
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+        working-directory: crates/app/frontend
+
+      - name: Build frontend
+        run: pnpm build
+        working-directory: crates/app/frontend
 
       - name: Format check
         run: cargo fmt --all --check
