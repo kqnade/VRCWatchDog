@@ -1,0 +1,31 @@
+/* Tailwind v4 entry. config-less: `@import` だけで本体 + preflight + components が入る。 */
+@import 'tailwindcss';
+
+/* tw-animate-css: Tailwind v4 互換のアニメーション utility (shadcn-svelte が依存)。 */
+@import 'tw-animate-css';
+
+/* dark variant: shadcn-svelte の dark theme を `.dark` クラス起点で有効化する。
+ * Phase 5d で全体を default-dark にしているので、root に `.dark` を付与する想定。
+ * 詳細は次 commit で +layout.svelte に <html class="dark"> を仕込んで切り替える。 */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Phase 5d/5e の inline style に揃えた最低限の base color。Tailwind の bg-/text- で
+ * 上書きできる前提。次 commit で @theme へ移して shadcn-svelte と整合させる。 */
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  html,
+  body {
+    margin: 0;
+    padding: 0;
+    background: #0b0b0c;
+    color: #e5e5e5;
+    font-family:
+      system-ui,
+      -apple-system,
+      'Segoe UI',
+      sans-serif;
+  }
+}
