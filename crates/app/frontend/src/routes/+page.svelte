@@ -6,6 +6,7 @@
     onOneDriveWarning,
     onSettingsCorrupt
   } from '$lib/api/events';
+  import { i18n } from '$lib/i18n/use_t.svelte';
   import type {
     HealthStatus,
     OneDriveWarning,
@@ -102,49 +103,47 @@
 </script>
 
 <main class="mx-auto min-h-screen max-w-3xl p-8">
-  <h1 class="mb-1 text-2xl font-semibold">VRCWatchDog</h1>
-  <p class="mb-2 text-sm opacity-60">
-    Phase 6 — log_watcher + projector + photo_scanner running.
-  </p>
+  <h1 class="mb-1 text-2xl font-semibold">{i18n.t('appName')}</h1>
+  <p class="mb-2 text-sm opacity-60">{i18n.t('homeSubtitle')}</p>
   <nav class="mb-6 flex flex-wrap gap-4 text-sm">
-    <a href="/realtime" class="text-muted-foreground hover:underline">Realtime →</a>
-    <a href="/photos" class="text-muted-foreground hover:underline">Photos →</a>
-    <a href="/history" class="text-muted-foreground hover:underline">Activity History →</a>
-    <a href="/notifications" class="text-muted-foreground hover:underline">Notifications →</a>
-    <a href="/videos" class="text-muted-foreground hover:underline">Videos →</a>
-    <a href="/settings" class="text-muted-foreground hover:underline">Settings →</a>
+    <a href="/realtime" class="text-muted-foreground hover:underline">{i18n.t('navRealtime')} →</a>
+    <a href="/photos" class="text-muted-foreground hover:underline">{i18n.t('navPhotos')} →</a>
+    <a href="/history" class="text-muted-foreground hover:underline">{i18n.t('navHistory')} →</a>
+    <a href="/notifications" class="text-muted-foreground hover:underline">{i18n.t('navNotifications')} →</a>
+    <a href="/videos" class="text-muted-foreground hover:underline">{i18n.t('navVideos')} →</a>
+    <a href="/settings" class="text-muted-foreground hover:underline">{i18n.t('navSettings')} →</a>
   </nav>
 
   <section class="mb-4 rounded-md border bg-card p-4 {healthBorderClass}">
-    <h2 class="mb-2 text-lg font-medium opacity-85">Health</h2>
+    <h2 class="mb-2 text-lg font-medium opacity-85">{i18n.t('healthHeading')}</h2>
     {#if health}
       <div
         class="mt-1 grid gap-x-4 gap-y-2"
         style="grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));"
       >
         <div class="flex flex-col">
-          <span class="text-xs uppercase tracking-wider opacity-55">Level</span>
+          <span class="text-xs uppercase tracking-wider opacity-55">{i18n.t('healthLevel')}</span>
           <span class="font-mono text-base {levelTextClass}">{health.level}</span>
         </div>
         <div class="flex flex-col">
-          <span class="text-xs uppercase tracking-wider opacity-55">Backlog</span>
+          <span class="text-xs uppercase tracking-wider opacity-55">{i18n.t('healthBacklog')}</span>
           <span class="font-mono text-base">{health.backlogSize.toLocaleString()}</span>
         </div>
         <div class="flex flex-col">
-          <span class="text-xs uppercase tracking-wider opacity-55">DB size</span>
+          <span class="text-xs uppercase tracking-wider opacity-55">{i18n.t('healthDbSize')}</span>
           <span class="font-mono text-base">{formatBytes(health.dbSizeBytes)}</span>
         </div>
         <div class="flex flex-col">
-          <span class="text-xs uppercase tracking-wider opacity-55">Lag (s)</span>
+          <span class="text-xs uppercase tracking-wider opacity-55">{i18n.t('healthLag')}</span>
           <span class="font-mono text-base">{health.projectorLagSec}</span>
         </div>
         <div class="flex flex-col">
-          <span class="text-xs uppercase tracking-wider opacity-55">Free disk</span>
+          <span class="text-xs uppercase tracking-wider opacity-55">{i18n.t('healthFreeDisk')}</span>
           <span class="font-mono text-base">{formatBytes(health.freeDiskBytes)}</span>
         </div>
       </div>
     {:else}
-      <p class="text-sm opacity-55">backend からの最初の health-status を待っています…</p>
+      <p class="text-sm opacity-55">{i18n.t('healthWaiting')}</p>
     {/if}
   </section>
 
@@ -152,14 +151,14 @@
     <section
       class="mb-4 rounded border border-warning bg-[var(--color-warning-bg)] px-4 py-3"
     >
-      <strong class="text-warning-foreground">設定ファイルが破損しています</strong>
+      <strong class="text-warning-foreground">{i18n.t('warnSettingsCorruptTitle')}</strong>
       <p class="mt-1 text-sm">
-        バックアップ:
+        {i18n.t('warnSettingsCorruptBackup')}
         <code class="rounded bg-muted px-1.5 py-0.5 font-mono text-sm"
           >{settingsCorrupt.backupPath}</code
         >
       </p>
-      <p class="mt-1 text-sm">理由: {settingsCorrupt.reason}</p>
+      <p class="mt-1 text-sm">{i18n.t('warnSettingsCorruptReason')}{settingsCorrupt.reason}</p>
     </section>
   {/if}
 
@@ -167,23 +166,21 @@
     <section
       class="mb-4 rounded border border-warning bg-[var(--color-warning-bg)] px-4 py-3"
     >
-      <strong class="text-warning-foreground"
-        >DB が同期下にあります ({onedrive.detectedIndicator})</strong
-      >
+      <strong class="text-warning-foreground">
+        {i18n.t('warnOneDriveTitle', { indicator: onedrive.detectedIndicator })}
+      </strong>
       <p class="mt-1 text-sm">
-        パス:
+        {i18n.t('warnOneDrivePath')}
         <code class="rounded bg-muted px-1.5 py-0.5 font-mono text-sm">{onedrive.dbPath}</code>
       </p>
-      <p class="mt-1 text-sm">
-        SQLite WAL の同期競合を避けるため、`%LOCALAPPDATA%` 配下への配置を推奨します。
-      </p>
+      <p class="mt-1 text-sm">{i18n.t('warnOneDriveAdvice')}</p>
     </section>
   {/if}
 
   <section>
-    <h2 class="mb-2 mt-6 text-lg font-medium opacity-85">Settings</h2>
+    <h2 class="mb-2 mt-6 text-lg font-medium opacity-85">{i18n.t('settingsHeading')}</h2>
     {#if loadError}
-      <p class="text-destructive">取得失敗: {loadError}</p>
+      <p class="text-destructive">{i18n.t('settingsLoadFailed')} {loadError}</p>
     {:else if settings}
       <pre class="overflow-x-auto rounded bg-muted p-3 font-mono text-sm">{JSON.stringify(
           settings,
@@ -191,7 +188,7 @@
           2
         )}</pre>
     {:else}
-      <p class="text-sm opacity-55">読込中…</p>
+      <p class="text-sm opacity-55">{i18n.t('loading')}</p>
     {/if}
   </section>
 </main>

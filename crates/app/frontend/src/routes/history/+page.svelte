@@ -8,6 +8,7 @@
     listRecentVisits,
     openPhoto,
   } from '$lib/api/commands';
+  import { i18n } from '$lib/i18n/use_t.svelte';
   import type { PhotoRecord, PlayerSession, Visit } from '$lib/api/types';
 
   // Phase 6.4 + A2: world_visits の活動履歴。
@@ -75,7 +76,7 @@
       photoCache = { ...photoCache, [visitId]: photos };
       photoLoadError = null;
     } catch (e) {
-      photoLoadError = `写真読込に失敗: ${e}`;
+      photoLoadError = `${i18n.t('photoOpenError')} ${e}`;
     }
   }
 
@@ -86,7 +87,7 @@
       playerCache = { ...playerCache, [visitId]: players };
       playerLoadError = null;
     } catch (e) {
-      playerLoadError = `プレイヤー読込に失敗: ${e}`;
+      playerLoadError = `${e}`;
     }
   }
 
@@ -119,7 +120,7 @@
     try {
       await openPhoto(photo.filePath);
     } catch (e) {
-      photoLoadError = `写真を開けませんでした: ${e}`;
+      photoLoadError = `${i18n.t('photoOpenError')} ${e}`;
     }
   }
 
@@ -146,16 +147,16 @@
 <main class="mx-auto min-h-screen max-w-4xl p-8">
   <header class="mb-6 flex items-baseline justify-between">
     <div>
-      <h1 class="text-2xl font-semibold">Activity History</h1>
+      <h1 class="text-2xl font-semibold">{i18n.t('historyTitle')}</h1>
       <p class="mt-1 text-sm opacity-60">
         {#if isLoading}
-          読込中…
+          {i18n.t('loading')}
         {:else}
-          直近 {visits.length} 件 (最大 {PAGE_SIZE} 件)
+          {i18n.t('photosCountFormat', { count: visits.length, max: PAGE_SIZE })}
         {/if}
       </p>
     </div>
-    <a href="/" class="text-sm text-muted-foreground hover:underline">← Home</a>
+    <a href="/" class="text-sm text-muted-foreground hover:underline">{i18n.t('navHomeBack')}</a>
   </header>
 
   {#if loadError}
@@ -165,9 +166,7 @@
   {/if}
 
   {#if !isLoading && visits.length === 0 && !loadError}
-    <p class="text-sm opacity-55">
-      まだ visit がありません。VRChat を起動して log_watcher が events を拾うのを待ってください。
-    </p>
+    <p class="text-sm opacity-55">{i18n.t('historyEmpty')}</p>
   {/if}
 
   <ul class="space-y-2">
@@ -202,19 +201,19 @@
           </div>
           <div class="mt-2 grid grid-cols-4 gap-4 text-xs">
             <div>
-              <span class="block uppercase tracking-wider opacity-55">Joined</span>
+              <span class="block uppercase tracking-wider opacity-55">{i18n.t('historyJoined')}</span>
               <span class="font-mono">{formatJoined(visit.joinedUtc)}</span>
             </div>
             <div>
-              <span class="block uppercase tracking-wider opacity-55">Duration</span>
+              <span class="block uppercase tracking-wider opacity-55">{i18n.t('historyDuration')}</span>
               <span class="font-mono">{visit.duration}</span>
             </div>
             <div>
-              <span class="block uppercase tracking-wider opacity-55">Photos</span>
+              <span class="block uppercase tracking-wider opacity-55">{i18n.t('historyPhotos')}</span>
               <span class="font-mono">{visit.photoCount}</span>
             </div>
             <div>
-              <span class="block uppercase tracking-wider opacity-55">Players</span>
+              <span class="block uppercase tracking-wider opacity-55">{i18n.t('historyPlayers')}</span>
               <span class="font-mono">{visit.playerCount}</span>
             </div>
           </div>
@@ -231,15 +230,15 @@
             <!-- players section -->
             <section>
               <h3 class="mb-2 text-xs font-semibold uppercase tracking-wider opacity-55">
-                Players ({visit.playerCount})
+                {i18n.t('playersHeading', { count: visit.playerCount })}
               </h3>
               {#if playerLoadError}
                 <p class="mb-2 text-xs text-destructive">{playerLoadError}</p>
               {/if}
               {#if visit.playerCount === 0}
-                <p class="text-xs opacity-55">co-player の記録はありません</p>
+                <p class="text-xs opacity-55">{i18n.t('playersEmpty')}</p>
               {:else if players === undefined}
-                <p class="text-xs opacity-55">読込中…</p>
+                <p class="text-xs opacity-55">{i18n.t('playersLoading')}</p>
               {:else}
                 <div class="flex flex-wrap gap-1.5">
                   {#each players as p (p.id)}
@@ -259,17 +258,17 @@
             <!-- photos section -->
             <section>
               <h3 class="mb-2 text-xs font-semibold uppercase tracking-wider opacity-55">
-                Photos ({visit.photoCount})
+                {i18n.t('photosTitle')} ({visit.photoCount})
               </h3>
               {#if photoLoadError}
                 <p class="mb-2 text-xs text-destructive">{photoLoadError}</p>
               {/if}
               {#if visit.photoCount === 0}
-                <p class="text-xs opacity-55">この visit に紐づく写真はありません</p>
+                <p class="text-xs opacity-55">{i18n.t('photosNoneInVisit')}</p>
               {:else if photos === undefined}
-                <p class="text-xs opacity-55">読込中…</p>
+                <p class="text-xs opacity-55">{i18n.t('photosLoading')}</p>
               {:else if photos.length === 0}
-                <p class="text-xs opacity-55">写真は 0 件です</p>
+                <p class="text-xs opacity-55">{i18n.t('photosNoneInVisit')}</p>
               {:else}
                 <div
                   class="grid gap-2"

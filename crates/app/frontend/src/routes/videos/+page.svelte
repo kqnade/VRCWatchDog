@@ -2,6 +2,7 @@
   import { convertFileSrc } from '@tauri-apps/api/core';
   import { onMount } from 'svelte';
   import { listRecentVideos } from '$lib/api/commands';
+  import { i18n } from '$lib/i18n/use_t.svelte';
   import type { Video } from '$lib/api/types';
 
   let videos = $state<Video[]>([]);
@@ -49,16 +50,16 @@
 <main class="mx-auto min-h-screen max-w-3xl p-8">
   <header class="mb-6 flex items-baseline justify-between">
     <div>
-      <h1 class="text-2xl font-semibold">Videos</h1>
+      <h1 class="text-2xl font-semibold">{i18n.t('videosTitle')}</h1>
       <p class="mt-1 text-sm opacity-60">
         {#if isLoading}
-          読込中…
+          {i18n.t('loading')}
         {:else}
-          直近 {videos.length} 件 (最大 {PAGE_SIZE} 件)
+          {i18n.t('photosCountFormat', { count: videos.length, max: PAGE_SIZE })}
         {/if}
       </p>
     </div>
-    <a href="/" class="text-sm text-muted-foreground hover:underline">← Home</a>
+    <a href="/" class="text-sm text-muted-foreground hover:underline">{i18n.t('navHomeBack')}</a>
   </header>
 
   {#if loadError}
@@ -68,7 +69,7 @@
   {/if}
 
   {#if !isLoading && videos.length === 0 && !loadError}
-    <p class="text-sm opacity-55">動画ログはまだ記録されていません。</p>
+    <p class="text-sm opacity-55">{i18n.t('videosEmpty')}</p>
   {/if}
 
   <ul class="space-y-2">

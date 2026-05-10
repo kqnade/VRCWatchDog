@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { onLiveLogEvent } from '$lib/api/events';
+  import { i18n } from '$lib/i18n/use_t.svelte';
   import type { LiveLogEvent } from '$lib/api/types';
 
   // Phase B2: live_log_event を購読して
@@ -100,17 +101,19 @@
 <main class="mx-auto min-h-screen max-w-5xl p-8">
   <header class="mb-6 flex items-baseline justify-between">
     <div>
-      <h1 class="text-2xl font-semibold">Realtime</h1>
-      <p class="mt-1 text-sm opacity-60">live log feed (最新 {events.length} / 上限 {RING_SIZE} 件)</p>
+      <h1 class="text-2xl font-semibold">{i18n.t('realtimeTitle')}</h1>
+      <p class="mt-1 text-sm opacity-60">
+        {i18n.t('photosCountFormat', { count: events.length, max: RING_SIZE })}
+      </p>
     </div>
-    <a href="/" class="text-sm text-muted-foreground hover:underline">← Home</a>
+    <a href="/" class="text-sm text-muted-foreground hover:underline">{i18n.t('navHomeBack')}</a>
   </header>
 
   <div class="mb-4 grid gap-4 md:grid-cols-2">
     <!-- current world -->
     <section class="rounded-md border bg-card p-4">
       <h2 class="mb-2 text-xs font-semibold uppercase tracking-wider opacity-55">
-        Current World
+        {i18n.t('realtimeWorld')}
       </h2>
       {#if currentWorldName}
         <p class="text-base font-medium">{currentWorldName}</p>
@@ -125,18 +128,18 @@
           </p>
         {/if}
       {:else}
-        <p class="text-sm opacity-55">未入室 (VRChat 起動を待機中)</p>
+        <p class="text-sm opacity-55">{i18n.t('realtimeWorldUnknown')}</p>
       {/if}
     </section>
 
     <!-- present players -->
     <section class="rounded-md border bg-card p-4">
       <h2 class="mb-2 flex items-baseline justify-between text-xs font-semibold uppercase tracking-wider opacity-55">
-        <span>Players in instance</span>
+        <span>{i18n.t('realtimePresence')}</span>
         <span class="font-mono text-[11px]">{presentPlayers.length}</span>
       </h2>
       {#if presentPlayers.length === 0}
-        <p class="text-sm opacity-55">同居プレイヤー無し</p>
+        <p class="text-sm opacity-55">{i18n.t('realtimePresenceEmpty')}</p>
       {:else}
         <div class="flex flex-wrap gap-1.5">
           {#each presentPlayers as name (name)}
@@ -152,28 +155,28 @@
   <!-- log feed -->
   <section class="rounded-md border bg-card">
     <div class="flex items-center justify-between border-b px-4 py-2">
-      <h2 class="text-xs font-semibold uppercase tracking-wider opacity-55">Log Feed</h2>
+      <h2 class="text-xs font-semibold uppercase tracking-wider opacity-55">
+        {i18n.t('realtimeFeedHeading')}
+      </h2>
       <div class="flex items-center gap-2 text-xs">
         <button
           type="button"
           class="rounded border px-2 py-0.5 text-muted-foreground transition hover:bg-muted/50"
           onclick={() => (isPaused = !isPaused)}
         >
-          {isPaused ? 'resume' : 'pause'}
+          {isPaused ? i18n.t('realtimeResumeBtn') : i18n.t('realtimePauseBtn')}
         </button>
         <button
           type="button"
           class="rounded border px-2 py-0.5 text-muted-foreground transition hover:bg-muted/50"
           onclick={clearLog}
         >
-          clear
+          {i18n.t('realtimeClearBtn')}
         </button>
       </div>
     </div>
     {#if events.length === 0}
-      <p class="px-4 py-6 text-center text-sm opacity-55">
-        backend からの live event を待っています…
-      </p>
+      <p class="px-4 py-6 text-center text-sm opacity-55">{i18n.t('realtimeWaiting')}</p>
     {:else}
       <ul class="max-h-[60vh] divide-y overflow-y-auto">
         {#each events as ev, i (i + ev.naiveLocal + ev.kind)}

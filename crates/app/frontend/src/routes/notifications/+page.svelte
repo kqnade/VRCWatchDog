@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { listRecentNotifications } from '$lib/api/commands';
+  import { i18n } from '$lib/i18n/use_t.svelte';
   import type { Notification } from '$lib/api/types';
 
   // Phase 7.2 + A3: notification_records の最新一覧。
@@ -115,16 +116,16 @@
 <main class="mx-auto min-h-screen max-w-3xl p-8">
   <header class="mb-6 flex items-baseline justify-between">
     <div>
-      <h1 class="text-2xl font-semibold">Notifications</h1>
+      <h1 class="text-2xl font-semibold">{i18n.t('notificationsTitle')}</h1>
       <p class="mt-1 text-sm opacity-60">
         {#if isLoading}
-          読込中…
+          {i18n.t('loading')}
         {:else}
-          {filtered.length} 件 / 直近 {notifications.length} 件 (最大 {PAGE_SIZE} 件)
+          {filtered.length} / {i18n.t('photosCountFormat', { count: notifications.length, max: PAGE_SIZE })}
         {/if}
       </p>
     </div>
-    <a href="/" class="text-sm text-muted-foreground hover:underline">← Home</a>
+    <a href="/" class="text-sm text-muted-foreground hover:underline">{i18n.t('navHomeBack')}</a>
   </header>
 
   {#if loadError}
@@ -144,7 +145,7 @@
             : 'bg-card text-muted-foreground hover:bg-muted/50'}"
           onclick={() => (viewMode = 'timeline')}
         >
-          時系列
+          {i18n.t('notifViewTimeline')}
         </button>
         <button
           type="button"
@@ -153,7 +154,7 @@
             : 'bg-card text-muted-foreground hover:bg-muted/50'}"
           onclick={() => (viewMode = 'sender')}
         >
-          送信者ごと
+          {i18n.t('notifViewBySender')}
         </button>
       </div>
 
@@ -178,7 +179,7 @@
             class="text-[11px] text-muted-foreground hover:underline"
             onclick={clearFilter}
           >
-            clear
+            {i18n.t('filterClear')}
           </button>
         {/if}
       </div>
@@ -186,11 +187,9 @@
   {/if}
 
   {#if !isLoading && notifications.length === 0 && !loadError}
-    <p class="text-sm opacity-55">
-      通知ログがまだ記録されていません。VRChat の動作を待ってください。
-    </p>
+    <p class="text-sm opacity-55">{i18n.t('notificationsEmpty')}</p>
   {:else if !isLoading && filtered.length === 0}
-    <p class="text-sm opacity-55">フィルタにマッチする通知はありません。</p>
+    <p class="text-sm opacity-55">{i18n.t('notificationsFilteredEmpty')}</p>
   {/if}
 
   {#if viewMode === 'timeline'}
@@ -214,7 +213,7 @@
               <a
                 href="/history?visit={n.worldVisitId}"
                 class="font-mono hover:underline"
-                title="紐づく visit を /history で開く"
+                title={i18n.t('visitOpenInHistory')}
               >
                 visit #{n.worldVisitId}
               </a>
@@ -233,7 +232,7 @@
               {g.senderName}
             </span>
             <span class="shrink-0 font-mono text-xs opacity-60">
-              {g.count} 件 · 最新 {formatTime(g.latestUtc)}
+              {i18n.t('senderLatest', { count: g.count, time: formatTime(g.latestUtc) })}
             </span>
           </div>
           <div class="mt-1.5 flex flex-wrap items-center gap-1">

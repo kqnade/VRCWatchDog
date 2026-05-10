@@ -2,6 +2,7 @@
   import { convertFileSrc } from '@tauri-apps/api/core';
   import { onMount } from 'svelte';
   import { listRecentPhotos, openPhoto, openPhotoFolder } from '$lib/api/commands';
+  import { i18n } from '$lib/i18n/use_t.svelte';
   import type { PhotoRecord } from '$lib/api/types';
 
   // Phase 6.2.2: photo_grid 仮版。
@@ -31,8 +32,7 @@
     try {
       await openPhoto(photo.filePath);
     } catch (e) {
-      // backend の path traversal 防御等で reject される可能性
-      loadError = `写真を開けませんでした: ${e}`;
+      loadError = `${i18n.t('photoOpenError')} ${e}`;
     }
   }
 
@@ -41,7 +41,7 @@
     try {
       await openPhotoFolder(photo.filePath);
     } catch (e) {
-      loadError = `フォルダを開けませんでした: ${e}`;
+      loadError = `${i18n.t('photoFolderOpenError')} ${e}`;
     }
   }
 
@@ -61,16 +61,16 @@
 <main class="mx-auto min-h-screen max-w-6xl p-8">
   <header class="mb-6 flex items-baseline justify-between">
     <div>
-      <h1 class="text-2xl font-semibold">Photos</h1>
+      <h1 class="text-2xl font-semibold">{i18n.t('photosTitle')}</h1>
       <p class="mt-1 text-sm opacity-60">
         {#if isLoading}
-          読込中…
+          {i18n.t('loading')}
         {:else}
-          直近 {photos.length} 件 (最大 {PAGE_SIZE} 件)
+          {i18n.t('photosCountFormat', { count: photos.length, max: PAGE_SIZE })}
         {/if}
       </p>
     </div>
-    <a href="/" class="text-sm text-muted-foreground hover:underline">← Home</a>
+    <a href="/" class="text-sm text-muted-foreground hover:underline">{i18n.t('navHomeBack')}</a>
   </header>
 
   {#if loadError}
@@ -80,11 +80,7 @@
   {/if}
 
   {#if !isLoading && photos.length === 0 && !loadError}
-    <p class="text-sm opacity-55">
-      写真がまだ取り込まれていません。Settings で
-      <code class="rounded bg-muted px-1.5 py-0.5 font-mono">photo_directory</code>
-      を設定し、PhotoScanner が走るのを待ってください。
-    </p>
+    <p class="text-sm opacity-55">{i18n.t('photosEmpty')}</p>
   {/if}
 
   <div
@@ -100,7 +96,7 @@
         class="group flex cursor-pointer flex-col rounded-md border bg-card p-3 text-left transition hover:border-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
         onclick={() => handleOpen(photo)}
         onkeydown={(ev) => onCardKey(photo, ev)}
-        title="クリック / Enter で開く"
+        title={i18n.t('photoOpenHint')}
       >
         <!-- サムネ表示。thumb_writer (Phase 6.3) が thumbPath を埋めたら asset:// に。
              tauri.conf.json の assetProtocol.scope は thumbs/** だけ通している。 -->
@@ -113,7 +109,7 @@
               loading="lazy"
             />
           {:else}
-            no thumb yet
+            {i18n.t('photoNoThumb')}
           {/if}
         </div>
         <p class="truncate font-mono text-xs" title={photo.fileName}>{photo.fileName}</p>
@@ -129,15 +125,15 @@
               {photo.worldName ?? `visit #${photo.worldVisitId}`}
             </a>
           {:else}
-            <span class="opacity-40">no visit</span>
+            <span class="opacity-40">{i18n.t('photoNoVisit')}</span>
           {/if}
           <button
             type="button"
             class="shrink-0 opacity-0 transition group-hover:opacity-100 hover:underline"
             onclick={(ev) => handleOpenFolder(photo, ev)}
-            title="フォルダを Explorer で開く"
+            title={i18n.t('photoFolderBtn')}
           >
-            📁 folder
+            {i18n.t('photoFolderBtn')}
           </button>
         </div>
       </div>
