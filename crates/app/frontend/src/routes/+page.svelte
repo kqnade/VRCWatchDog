@@ -109,6 +109,7 @@
   <nav class="mb-6 flex gap-4 text-sm">
     <a href="/photos" class="text-muted-foreground hover:underline">Photos →</a>
     <a href="/history" class="text-muted-foreground hover:underline">Activity History →</a>
+    <a href="/settings" class="text-muted-foreground hover:underline">Settings →</a>
   </nav>
 
   <section class="mb-4 rounded-md border bg-card p-4 {healthBorderClass}">
