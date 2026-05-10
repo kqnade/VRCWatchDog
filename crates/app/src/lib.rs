@@ -12,6 +12,8 @@
     windows_subsystem = "windows"
 )]
 
+pub mod paths;
+
 /// Tauri アプリを起動する。
 ///
 /// 失敗時は OS 例外コードと共に process exit するので戻り値は ()。
