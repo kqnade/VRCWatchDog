@@ -4,6 +4,7 @@
 
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -127,6 +128,20 @@ fn corrupt_backup_path(original: &Path) -> PathBuf {
 ///
 /// 同一 directory の一時ファイルに pretty JSON を fsync し、`persist` で rename。
 /// crash で中断した場合、`.tmp` ゴミは残るが本体は壊れない。
+///
+/// # Windows のリトライ
+///
+/// `tempfile::persist` は内部で `MoveFileExW(..., MOVEFILE_REPLACE_EXISTING)` を呼ぶ。
+/// Windows では下記の状況で `ERROR_ACCESS_DENIED (5)` または
+/// `ERROR_SHARING_VIOLATION (32)` が一時的に返る:
+///
+/// - 別の rename がちょうど同じ宛先を置換中で、open handle が刹那的に残っている
+/// - Windows Defender / 他 AV が write 直後にスキャンのため open している
+///
+/// production の `SettingsWriter` actor は逐列化されているのでまず起きないが、
+/// プラン §4 の「100 並列 save で破損なし」を担保するため、retryable な OS error は
+/// 50ms 間隔で最大 19 回 (= ~1s) リトライする。POSIX の `rename(2)` は atomic で
+/// これらの error は発生しないので、retry は実質 no-op。
 pub fn save_settings_atomic(path: &Path, settings: &Settings) -> io::Result<()> {
     let parent = path.parent().ok_or_else(|| {
         io::Error::new(
@@ -142,8 +157,38 @@ pub fn save_settings_atomic(path: &Path, settings: &Settings) -> io::Result<()> 
     let mut tmp = tempfile::NamedTempFile::new_in(parent)?;
     tmp.as_file_mut().write_all(&bytes)?;
     tmp.as_file_mut().sync_all()?;
-    tmp.persist(path).map_err(|e| e.error)?;
-    Ok(())
+
+    let mut current = tmp;
+    let mut attempt: u32 = 0;
+    const MAX_ATTEMPTS: u32 = 20;
+    const BACKOFF: Duration = Duration::from_millis(50);
+    loop {
+        match current.persist(path) {
+            Ok(_) => return Ok(()),
+            Err(persist_err) => {
+                attempt += 1;
+                if attempt >= MAX_ATTEMPTS || !is_retryable_persist_error(&persist_err.error) {
+                    return Err(persist_err.error);
+                }
+                std::thread::sleep(BACKOFF);
+                current = persist_err.file;
+            }
+        }
+    }
+}
+
+/// `persist` がリトライで回復しうるかを判定する。
+///
+/// Windows の `MoveFileExW` が返す ACCESS_DENIED (5) / SHARING_VIOLATION (32) は
+/// 一時的な open handle 競合に起因し、短い待機で解消する。
+/// それ以外の `PermissionDenied` (本物の権限不足) は raw_os_error を見て除外しないと
+/// 永久にハングするので注意。
+fn is_retryable_persist_error(err: &io::Error) -> bool {
+    match err.raw_os_error() {
+        // ERROR_ACCESS_DENIED, ERROR_SHARING_VIOLATION
+        Some(5) | Some(32) => true,
+        _ => false,
+    }
 }
 
 #[cfg(test)]
