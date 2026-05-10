@@ -28,6 +28,7 @@ use vrcwatchdog_core::ipc::events::names;
 use vrcwatchdog_core::log_watcher::{
     LogWatcherActor, NotifyEventSource, RealFsProbe, WatcherConfig,
 };
+use vrcwatchdog_core::photo_scanner::{NotifyPhotoSource, PhotoScannerActor, PhotoScannerConfig};
 use vrcwatchdog_core::projector::project_batch;
 use vrcwatchdog_core::settings::Settings;
 
@@ -170,6 +171,21 @@ async fn spawn_background_tasks(
         }
     }
 
+    // photo_scanner: settings.photo_directory が設定済みかつ実在ディレクトリなら spawn。
+    // log_watcher と違って fallback 先が無いので、未設定 / 不在は静かに skip
+    // (UI に「写真フォルダを選んでください」プロンプトを出す前提)。
+    if let Some(dir) = settings_snapshot.photo_directory.as_deref() {
+        if dir.is_dir() {
+            let tz = resolve_local_tz();
+            spawn_photo_scanner(&mut tasks, pool.clone(), dir, tz).await;
+        } else {
+            tracing::warn!(
+                photo_dir = %dir.display(),
+                "photo_directory does not exist; photo_scanner not started",
+            );
+        }
+    }
+
     // projector: 常時 spawn。raw が無くても loop は回り続け (no-op)、
     // 後から log_watcher が事象を流し込んだ時点で processing が始まる。
     let pool_proj = pool.clone();
@@ -214,6 +230,67 @@ async fn spawn_background_tasks(
     });
 
     tasks
+}
+
+/// OS から local timezone を取得して `chrono_tz::Tz` に変換する。
+///
+/// 取得失敗 / parse 失敗時は UTC を返す。これは photo の `taken_naive_local` を
+/// UTC に解決する際の前提として使う (DST 境界で Ambiguous/Gap を出す元)。
+fn resolve_local_tz() -> chrono_tz::Tz {
+    iana_time_zone::get_timezone()
+        .ok()
+        .and_then(|name| name.parse().ok())
+        .unwrap_or(chrono_tz::UTC)
+}
+
+/// PhotoScannerActor を spawn する。NotifyPhotoSource の初期化失敗 / reconcile 失敗は
+/// warn ログだけで吸収して他の background task を阻害しない (log_watcher と同じ方針)。
+async fn spawn_photo_scanner(
+    tasks: &mut JoinSet<()>,
+    pool: SqlitePool,
+    photo_dir: &Path,
+    tz: chrono_tz::Tz,
+) {
+    let source = match NotifyPhotoSource::new(photo_dir) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(
+                photo_dir = %photo_dir.display(),
+                error = %e,
+                "failed to initialize photo notify watcher; photo_scanner not started",
+            );
+            return;
+        }
+    };
+    let mut actor = PhotoScannerActor::new(pool, source, PhotoScannerConfig { tz });
+
+    // 起動時 reconcile: 既存写真を catch-up。失敗時は warn だけして actor 起動は続行。
+    let dir_for_log = photo_dir.to_path_buf();
+    match actor.reconcile(photo_dir).await {
+        Ok(outcome) => tracing::info!(
+            photo_dir = %photo_dir.display(),
+            considered = outcome.considered,
+            recorded = outcome.recorded,
+            skipped = outcome.skipped,
+            "photo_scanner initial reconcile completed",
+        ),
+        Err(e) => tracing::warn!(
+            photo_dir = %photo_dir.display(),
+            error = %e,
+            "initial photo reconcile failed; photo_scanner will still start",
+        ),
+    }
+
+    tasks.spawn(async move {
+        if let Err(e) = actor.run().await {
+            tracing::error!(
+                photo_dir = %dir_for_log.display(),
+                error = %e,
+                "photo_scanner actor exited with error",
+            );
+        }
+    });
+    tracing::info!(photo_dir = %photo_dir.display(), "photo_scanner spawned");
 }
 
 /// `spawn_log_watcher` 内部分け。エラー時は warn log だけで吸収し、

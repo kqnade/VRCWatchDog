@@ -5406,6 +5406,8 @@ name = "vrcwatchdog-app"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "chrono-tz",
+ "iana-time-zone",
  "serde",
  "serde_json",
  "sqlx",

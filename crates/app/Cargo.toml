@@ -41,6 +41,8 @@ tauri-plugin-opener = "2"
 vrcwatchdog-core = { path = "../core" }
 tokio.workspace = true
 sqlx.workspace = true
+chrono-tz.workspace = true
+iana-time-zone.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
