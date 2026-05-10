@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { getSettings } from '$lib/api/commands';
+  import { getInitialWarnings, getSettings } from '$lib/api/commands';
   import {
     onHealthStatus,
     onOneDriveWarning,
@@ -13,10 +13,11 @@
     SettingsCorruptWarning
   } from '$lib/api/types';
 
-  // Phase 5e: backend が emit する 3 種の event を listen し、初期 settings を
-  // command で取得して表示する。
-  // - HealthStatus: 2 秒毎の定期。projector backlog / DB サイズ / level を表示。
-  // - SettingsCorruptWarning / OneDriveWarning: 起動時 1 回 (best-effort)。
+  // Phase 5e/5f:
+  // - HealthStatus: 2 秒毎の定期 event。projector backlog / DB サイズ / level を表示。
+  // - 起動時警告 (settings corrupt / OneDrive risk): onMount で `getInitialWarnings`
+  //   を pull (event は listener attach 前に飛んで取りこぼされるため)。
+  // - 起動後に新規発生する警告は引き続き event 経由 (再 corrupt 検出など)。
   let settings = $state<Settings | null>(null);
   let settingsCorrupt = $state<SettingsCorruptWarning | null>(null);
   let onedrive = $state<OneDriveWarning | null>(null);
@@ -41,7 +42,7 @@
     let unlistenOneDrive: (() => void) | undefined;
     let unlistenHealth: (() => void) | undefined;
 
-    // 並列 attach。setup() 直後の警告 emit を取りこぼさないよう同期的に開始。
+    // 起動後に新規発生する警告 (再 corrupt 等) と health status の listener を貼る。
     onSettingsCorrupt((p) => {
       settingsCorrupt = p;
     }).then((u) => {
@@ -57,6 +58,17 @@
     }).then((u) => {
       unlistenHealth = u;
     });
+
+    // 起動時に Bootstrap が検出した警告を pull (race 回避)。
+    getInitialWarnings()
+      .then((w) => {
+        if (w.settingsCorrupt) settingsCorrupt = w.settingsCorrupt;
+        if (w.dbSyncRisk) onedrive = w.dbSyncRisk;
+      })
+      .catch((e: unknown) => {
+        // 取得失敗は致命ではない (event 経由でも届く可能性は残る)
+        console.error('getInitialWarnings failed:', e);
+      });
 
     // 初期 settings を取得 (失敗してもアプリは続行可能)。
     getSettings()

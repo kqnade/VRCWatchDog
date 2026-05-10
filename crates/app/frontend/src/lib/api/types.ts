@@ -42,6 +42,13 @@ export interface UnknownLogFormatWarning {
   unparsableRatio: number;
 }
 
+// `get_initial_warnings` command の戻り値。
+// 起動時警告は event 経由だと onMount 前に取りこぼされるので、command で pull する。
+export interface InitialWarnings {
+  settingsCorrupt: SettingsCorruptWarning | null;
+  dbSyncRisk: OneDriveWarning | null;
+}
+
 // Settings は core::settings::store::Settings と一致させる (snake_case)。
 export interface Settings {
   log_directory: string | null;

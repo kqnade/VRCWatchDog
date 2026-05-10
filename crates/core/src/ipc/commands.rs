@@ -21,8 +21,27 @@
 
 use std::path::{Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
+
+use crate::ipc::events::{OneDriveWarning, SettingsCorruptWarning};
 use crate::photo::{validate_photo_path, PhotoAccessError, PhotoTarget};
 use crate::settings::Settings;
+
+/// `get_initial_warnings` command の戻り値。
+///
+/// **背景**: 起動時警告 (`SettingsCorruptWarning` / `OneDriveWarning`) を `setup()` で
+/// emit すると、frontend の `onMount` listener attach 前に飛んで取りこぼされる
+/// (Tauri event は replay されない)。代わりに本 struct を返す command を
+/// frontend が onMount 直後に poll する方式にすることで、レース条件を回避する。
+///
+/// 起動後に新たに発生する警告は引き続き event 経由 (例: 設定変更時に再 corrupt
+/// 検出した場合は `vrcwatchdog://settings-corrupt` を emit)。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InitialWarnings {
+    pub settings_corrupt: Option<SettingsCorruptWarning>,
+    pub db_sync_risk: Option<OneDriveWarning>,
+}
 
 /// `open_photo` / `open_photo_folder` 共通のエラー型。
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -134,6 +153,41 @@ mod tests {
             err,
             OpenPhotoError::Access(PhotoAccessError::OutsideScope { .. })
         ));
+    }
+
+    #[test]
+    fn initial_warnings_serializes_to_camel_case() {
+        // frontend は camelCase で受け取る前提なので serde rename を確認しておく。
+        let w = InitialWarnings {
+            settings_corrupt: Some(SettingsCorruptWarning {
+                backup_path: PathBuf::from("C:/x.bak"),
+                reason: "expected colon".into(),
+            }),
+            db_sync_risk: Some(OneDriveWarning {
+                db_path: PathBuf::from("C:/Users/Foo/OneDrive/db.sqlite"),
+                detected_indicator: "OneDrive".into(),
+            }),
+        };
+
+        let json = serde_json::to_string(&w).expect("ser");
+
+        assert!(json.contains("\"settingsCorrupt\""));
+        assert!(json.contains("\"dbSyncRisk\""));
+    }
+
+    #[test]
+    fn initial_warnings_with_no_warnings_serializes_to_two_nulls() {
+        let w = InitialWarnings {
+            settings_corrupt: None,
+            db_sync_risk: None,
+        };
+
+        let json = serde_json::to_string(&w).expect("ser");
+
+        assert_eq!(
+            json, r#"{"settingsCorrupt":null,"dbSyncRisk":null}"#,
+            "Option::None は serde で null になる (frontend は null チェックする)"
+        );
     }
 
     #[test]

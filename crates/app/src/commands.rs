@@ -17,6 +17,8 @@ use std::path::PathBuf;
 use tauri::{AppHandle, State};
 use tauri_plugin_opener::OpenerExt;
 use vrcwatchdog_core::ipc::commands as core_cmd;
+use vrcwatchdog_core::ipc::commands::InitialWarnings;
+use vrcwatchdog_core::ipc::events::{OneDriveWarning, SettingsCorruptWarning};
 use vrcwatchdog_core::settings::Settings;
 
 use crate::state::AppState;
@@ -65,6 +67,28 @@ pub async fn save_settings(settings: Settings, state: State<'_, AppState>) -> Re
         .save(settings)
         .await
         .map_err(|e| e.to_string())
+}
+
+/// 起動時に Bootstrap が検出済みの警告 (settings corrupt / DB OneDrive sync) を返す。
+///
+/// frontend は `onMount` 直後にこの command を invoke し、結果を UI に反映する想定。
+/// setup() で event を emit する従来方式は listener attach 前にイベントが飛んで
+/// 取りこぼされる race があったため、polling 方式で置換した (plan §4 / §確定方針)。
+#[tauri::command]
+pub fn get_initial_warnings(state: State<'_, AppState>) -> InitialWarnings {
+    InitialWarnings {
+        settings_corrupt: state
+            .settings_corrupt
+            .as_ref()
+            .map(|info| SettingsCorruptWarning {
+                backup_path: info.backup_path.clone(),
+                reason: info.reason.clone(),
+            }),
+        db_sync_risk: state.db_sync_risk.as_ref().map(|risk| OneDriveWarning {
+            db_path: risk.db_path.clone(),
+            detected_indicator: risk.indicator.clone(),
+        }),
+    }
 }
 
 /// 検証済み path を OS の関連付けされたアプリケーションで開く。

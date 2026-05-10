@@ -24,7 +24,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tokio::task::JoinSet;
 use tracing_subscriber::EnvFilter;
 use vrcwatchdog_core::health::collect_health;
-use vrcwatchdog_core::ipc::events::{names, OneDriveWarning, SettingsCorruptWarning};
+use vrcwatchdog_core::ipc::events::names;
 use vrcwatchdog_core::log_watcher::{
     LogWatcherActor, NotifyEventSource, RealFsProbe, WatcherConfig,
 };
@@ -97,9 +97,12 @@ pub fn run() {
             commands::open_photo_folder,
             commands::get_settings,
             commands::save_settings,
+            commands::get_initial_warnings,
         ])
-        .setup(|app| {
-            emit_deferred_warnings(app);
+        .setup(|_app| {
+            // 起動時警告は `get_initial_warnings` command で frontend が pull する
+            // 方式に置換済み (race 対策)。setup() で emit する旧方式は
+            // listener attach 前のため取りこぼされていた。
             // Step 10 (--startup の hidden 化) は system tray と一緒に Phase 5e+ で。
             Ok(())
         })
@@ -129,35 +132,6 @@ pub fn run() {
     // 抜けた後に bg_tasks を drop して JoinSet が abort_all を呼ぶ。
     app.run(|_handle, _event| {});
     drop(bg_tasks);
-}
-
-/// `Bootstrap` で検出済みの起動時警告を emit する (best-effort)。
-///
-/// frontend 側 listener が onMount 後に attach される一方、本関数は setup()
-/// (= webview load 前) で呼ばれるため、初回 emit は取りこぼされる可能性がある。
-/// Phase 5e 後続で「初期警告を再取得する command」を追加して取り回しを改善する。
-fn emit_deferred_warnings(app: &tauri::App) {
-    let state: tauri::State<'_, AppState> = app.state();
-
-    if let Some(info) = &state.settings_corrupt {
-        let payload = SettingsCorruptWarning {
-            backup_path: info.backup_path.clone(),
-            reason: info.reason.clone(),
-        };
-        if let Err(e) = app.emit(names::SETTINGS_CORRUPT_WARNING, payload) {
-            tracing::warn!(error = %e, "failed to emit settings corrupt warning");
-        }
-    }
-
-    if let Some(risk) = &state.db_sync_risk {
-        let payload = OneDriveWarning {
-            db_path: risk.db_path.clone(),
-            detected_indicator: risk.indicator.clone(),
-        };
-        if let Err(e) = app.emit(names::ONEDRIVE_WARNING, payload) {
-            tracing::warn!(error = %e, "failed to emit onedrive warning");
-        }
-    }
 }
 
 /// log_watcher actor + projector loop + health emitter を spawn。

@@ -3,7 +3,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 
-import type { Settings } from './types';
+import type { InitialWarnings, Settings } from './types';
 
 /**
  * 写真原本を OS の関連付けされたアプリケーションで開く。
@@ -32,4 +32,15 @@ export function getSettings(): Promise<Settings> {
  */
 export function saveSettings(settings: Settings): Promise<void> {
   return invoke('save_settings', { settings });
+}
+
+/**
+ * 起動時に Bootstrap が検出した警告 (settings corrupt / DB OneDrive sync) を取得。
+ *
+ * setup() で event を emit すると onMount 前に取りこぼされるため、frontend が
+ * onMount 直後にこの command を pull する方式にしてある。起動後に新規発生する
+ * 警告は引き続き event 経由 (例: 設定変更で再 corrupt 検出時)。
+ */
+export function getInitialWarnings(): Promise<InitialWarnings> {
+  return invoke('get_initial_warnings');
 }
