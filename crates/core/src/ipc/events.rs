@@ -84,6 +84,51 @@ pub struct UnknownLogFormatWarning {
     pub unparsable_ratio: f64,
 }
 
+/// /realtime ページ向けの「今起きたこと」イベント (Phase B)。
+///
+/// projector が raw event を Done に projection した直後に流す UI 向け要約。
+/// raw_log_events / domain table への永続化は同 tx で commit 済みなので、UI が
+/// 受け取った後に DB を見れば必ず存在する (eventual の race なし)。
+///
+/// `naive_local` はログ行のタイムスタンプ。`naive_local` 不在の event は projection
+/// 自体 skipped されるので emit されない。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum LiveLogEvent {
+    /// 新しい world に入室開始 (`RoomEntering` 由来)。world_id/instance_id は次の
+    /// `RoomJoining` で確定するためここでは name のみ。
+    WorldEntering {
+        naive_local: String,
+        world_name: String,
+    },
+    /// 入室確定 (world_id + instance_id)。`RoomJoining` 由来。
+    WorldJoining {
+        naive_local: String,
+        world_id: String,
+        instance_id: String,
+    },
+    /// 同居 player 入室 (`PlayerJoined` 由来)。
+    PlayerJoined {
+        naive_local: String,
+        display_name: String,
+        user_id: Option<String>,
+    },
+    /// 同居 player 退室 (`PlayerLeft` 由来)。
+    PlayerLeft {
+        naive_local: String,
+        display_name: String,
+        user_id: Option<String>,
+    },
+    /// 通知受信 (`Notification` 由来)。
+    Notification {
+        naive_local: String,
+        sender: String,
+        ntype: String,
+    },
+    /// 動画 URL 検出 (`VideoUrl` 由来)。
+    VideoUrl { naive_local: String, url: String },
+}
+
 /// 全イベント名 (TS 側との文字列同期用)。
 pub mod names {
     pub const HEALTH_STATUS: &str = "vrcwatchdog://health-status";
@@ -92,6 +137,7 @@ pub mod names {
     pub const FATAL_CORRUPTION: &str = "vrcwatchdog://fatal-corruption";
     pub const INGEST_PROGRESS: &str = "vrcwatchdog://ingest-progress";
     pub const UNKNOWN_LOG_FORMAT: &str = "vrcwatchdog://unknown-log-format";
+    pub const LIVE_LOG_EVENT: &str = "vrcwatchdog://live-log-event";
 }
 
 #[cfg(test)]

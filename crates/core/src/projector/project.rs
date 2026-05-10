@@ -8,6 +8,7 @@ use crate::db::repo::{
     video_records, world_visits,
 };
 use crate::db::Pool;
+use crate::ipc::events::LiveLogEvent;
 use crate::log_parser::LogEvent;
 use crate::Result;
 
@@ -24,6 +25,58 @@ pub struct ProjectorBatchResult {
     pub done: usize,
     pub skipped: usize,
     pub failed: usize,
+    /// Done となった raw イベントを UI 向け [`LiveLogEvent`] に整形した列。
+    /// 永続化済みの commit 後に caller が `app.emit(LIVE_LOG_EVENT, ev)` で
+    /// frontend に流す想定 (Phase B)。
+    pub events: Vec<LiveLogEvent>,
+}
+
+/// raw payload を UI 向け [`LiveLogEvent`] に変換する。Done になった raw のみ
+/// project_batch から呼び出される。`UserAuthenticated` / `UnparsableLine` は
+/// UI ストリームに乗せたくないので None を返す。
+fn to_live_event(event: &LogEvent, naive_local: chrono::NaiveDateTime) -> Option<LiveLogEvent> {
+    let nl = naive_local.format("%Y-%m-%d %H:%M:%S").to_string();
+    match event {
+        LogEvent::RoomEntering { world_name } => Some(LiveLogEvent::WorldEntering {
+            naive_local: nl,
+            world_name: world_name.clone(),
+        }),
+        LogEvent::RoomJoining {
+            world_id,
+            instance_id,
+        } => Some(LiveLogEvent::WorldJoining {
+            naive_local: nl,
+            world_id: world_id.clone(),
+            instance_id: instance_id.clone(),
+        }),
+        LogEvent::PlayerJoined {
+            display_name,
+            user_id,
+        } => Some(LiveLogEvent::PlayerJoined {
+            naive_local: nl,
+            display_name: display_name.clone(),
+            user_id: user_id.clone(),
+        }),
+        LogEvent::PlayerLeft {
+            display_name,
+            user_id,
+        } => Some(LiveLogEvent::PlayerLeft {
+            naive_local: nl,
+            display_name: display_name.clone(),
+            user_id: user_id.clone(),
+        }),
+        LogEvent::Notification { sender, ntype } => Some(LiveLogEvent::Notification {
+            naive_local: nl,
+            sender: sender.clone(),
+            ntype: ntype.clone(),
+        }),
+        LogEvent::VideoUrl { url } => Some(LiveLogEvent::VideoUrl {
+            naive_local: nl,
+            url: url.clone(),
+        }),
+        // UI には流さない (内部ステート遷移なので意味が薄い)
+        LogEvent::UserAuthenticated { .. } | LogEvent::UnparsableLine { .. } => None,
+    }
 }
 
 /// raw event を 1 件 projection する。tx 境界は呼び出し側が制御。
@@ -196,7 +249,20 @@ pub async fn project_batch(pool: &Pool, batch_size: i64) -> Result<ProjectorBatc
     };
     for raw in &pending {
         match project_one(&mut tx, raw).await? {
-            ProjectorOutcome::Done => result.done += 1,
+            ProjectorOutcome::Done => {
+                result.done += 1;
+                // UI 向けに LiveLogEvent を組み立てる (Phase B)。serde_json::from_str は
+                // project_one 内で 1 度成功しているはずだが、ownership を回さないために
+                // ここでもう 1 度パースする。payload は数百 byte 程度なので無視できる。
+                if let (Ok(ev), Some(nl)) = (
+                    serde_json::from_str::<LogEvent>(&raw.payload_json),
+                    raw.naive_local,
+                ) {
+                    if let Some(live) = to_live_event(&ev, nl) {
+                        result.events.push(live);
+                    }
+                }
+            }
             ProjectorOutcome::Skipped => result.skipped += 1,
             ProjectorOutcome::FailedRecorded(_) => result.failed += 1,
         }
@@ -521,6 +587,53 @@ mod tests {
             .get(0);
         assert_eq!(visits, 1);
         assert_eq!(sessions, 1);
+    }
+
+    /// Phase B: project_batch は Done になった raw について
+    /// LiveLogEvent を `events` vec に積む。WorldEntering は emit、UserAuthenticated は除外。
+    #[tokio::test]
+    async fn project_batch_collects_live_events_for_done_outcomes_only() {
+        let (pool, _dir, pf_id) = setup().await;
+        // RoomEntering (Done) + UserAuthenticated (Done だが UI 対象外) + UnparsableLine (Skipped)
+        add_raw(
+            &pool,
+            pf_id,
+            0,
+            LogEvent::RoomEntering {
+                world_name: "Hub".into(),
+            },
+            nd(20, 0),
+        )
+        .await;
+        add_raw(
+            &pool,
+            pf_id,
+            100,
+            LogEvent::UserAuthenticated {
+                display_name: "kqnade".into(),
+            },
+            nd(20, 1),
+        )
+        .await;
+        add_raw(
+            &pool,
+            pf_id,
+            200,
+            LogEvent::UnparsableLine { reason: "x".into() },
+            nd(20, 2),
+        )
+        .await;
+
+        let r = project_batch(&pool, 100).await.unwrap();
+
+        // events は WorldEntering 1 件のみ (Done だが UserAuthenticated は除外、Unparsable は Skipped)
+        assert_eq!(r.events.len(), 1);
+        match &r.events[0] {
+            LiveLogEvent::WorldEntering { world_name, .. } => {
+                assert_eq!(world_name, "Hub");
+            }
+            other => panic!("expected WorldEntering, got {other:?}"),
+        }
     }
 
     /// 不変条件: UnparsableLine は Skipped、UserAuthenticated は Done で

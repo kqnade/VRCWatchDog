@@ -36,6 +36,7 @@ use vrcwatchdog_core::photo_scanner::{NotifyPhotoSource, PhotoScannerActor, Phot
 use vrcwatchdog_core::process_monitor::{
     ProcessTransition, VRChatProcessMonitor, VRChatProcessMonitorConfig,
 };
+use vrcwatchdog_core::ipc::events::names as event_names;
 use vrcwatchdog_core::projector::project_batch;
 use vrcwatchdog_core::settings::Settings;
 use vrcwatchdog_core::thumb_writer::{ThumbWriterActor, ThumbWriterConfig};
@@ -245,7 +246,9 @@ async fn spawn_background_tasks(
 
     // projector: 常時 spawn。raw が無くても loop は回り続け (no-op)、
     // 後から log_watcher が事象を流し込んだ時点で processing が始まる。
+    // Phase B: Done になった raw event を LiveLogEvent として frontend に emit。
     let pool_proj = pool.clone();
+    let app_for_proj = app.clone();
     tasks.spawn(async move {
         loop {
             match project_batch(&pool_proj, PROJECTOR_BATCH_SIZE).await {
@@ -257,6 +260,15 @@ async fn spawn_background_tasks(
                         failed = r.failed,
                         "projector batch",
                     );
+                    // commit 後 (= raw 永続化済み) なので emit 順は任意で OK。
+                    // frontend が listener attach 前なら取りこぼすが、起動時の catch-up
+                    // 分は /history などで読み返せるので realtime 視点では問題なし。
+                    use tauri::Emitter;
+                    for ev in r.events {
+                        if let Err(e) = app_for_proj.emit(event_names::LIVE_LOG_EVENT, &ev) {
+                            tracing::warn!(error = %e, "live_log_event emit failed");
+                        }
+                    }
                 }
                 Ok(_) => {}
                 Err(e) => tracing::error!(error = %e, "projector batch failed"),
