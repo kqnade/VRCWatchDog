@@ -4,7 +4,8 @@ use sqlx::{Sqlite, Transaction};
 use tracing::warn;
 
 use crate::db::repo::{
-    notification_records, player_sessions, projected_raw_events, video_records, world_visits,
+    notification_records, player_sessions, projected_raw_events, self_player_records,
+    video_records, world_visits,
 };
 use crate::db::Pool;
 use crate::log_parser::LogEvent;
@@ -159,9 +160,13 @@ pub async fn project_one(
             video_records::insert(tx, raw.raw_event_id, active_id, &url, naive_local, ctx).await?;
             ProjectorOutcome::Done
         }
-        LogEvent::UserAuthenticated { .. } => {
-            projected_raw_events::mark_skipped(tx, raw.raw_event_id, "user_authenticated").await?;
-            return Ok(ProjectorOutcome::Skipped);
+        LogEvent::UserAuthenticated { display_name } => {
+            // Phase G: 自分自身の認証ログを self_player_records に projection。
+            // 同 raw_id で UNIQUE なので重複なし。display_name のみ抽出 (user_id は VRChat
+            // ログ形式では同行に出ないため、UI 用途では display_name で十分)。
+            self_player_records::insert(tx, raw.raw_event_id, &display_name, naive_local, ctx)
+                .await?;
+            ProjectorOutcome::Done
         }
         LogEvent::UnparsableLine { .. } => {
             projected_raw_events::mark_skipped(tx, raw.raw_event_id, "unparsable").await?;
@@ -518,9 +523,10 @@ mod tests {
         assert_eq!(sessions, 1);
     }
 
-    /// 不変条件: UnparsableLine と UserAuthenticated は Skipped としてマークされる。
+    /// 不変条件: UnparsableLine は Skipped、UserAuthenticated は Done で
+    /// self_player_records に 1 行 insert される (Phase G 以降)。
     #[tokio::test]
-    async fn unparsable_and_user_authenticated_skipped() {
+    async fn unparsable_skipped_and_user_authenticated_projected_to_self_player() {
         let (pool, _dir, pf_id) = setup().await;
         add_raw(
             &pool,
@@ -542,10 +548,10 @@ mod tests {
         .await;
         let r = project_batch(&pool, 100).await.unwrap();
         assert_eq!(r.processed, 2);
-        assert_eq!(r.skipped, 2);
-        assert_eq!(r.done, 0);
+        assert_eq!(r.skipped, 1, "UnparsableLine のみ skipped");
+        assert_eq!(r.done, 1, "UserAuthenticated は self_player に project");
 
-        // どちらも domain 行は作らない
+        // world_visits は依然 0 件 (UserAuthenticated は visit を作らない)
         let visits: i64 = sqlx::query("SELECT COUNT(*) FROM world_visits")
             .fetch_one(&pool)
             .await
@@ -553,14 +559,31 @@ mod tests {
             .get(0);
         assert_eq!(visits, 0);
 
+        // self_player_records には 1 件 (display_name=kqnade)
+        let self_count: i64 = sqlx::query("SELECT COUNT(*) FROM self_player_records")
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(self_count, 1);
+        let name: String =
+            sqlx::query("SELECT display_name FROM self_player_records ORDER BY id DESC LIMIT 1")
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+                .get(0);
+        assert_eq!(name, "kqnade");
+
+        // raw_event_id 順 (= insert 順) に取り出すと:
+        // [0] = UnparsableLine  → Skipped
+        // [1] = UserAuthenticated → Done (self_player_records に projection)
         let statuses: Vec<(String,)> =
             sqlx::query_as("SELECT status FROM projected_raw_events ORDER BY raw_event_id")
                 .fetch_all(&pool)
                 .await
                 .unwrap();
         assert_eq!(statuses.len(), 2);
-        for (s,) in statuses {
-            assert_eq!(s, "Skipped");
-        }
+        assert_eq!(statuses[0].0, "Skipped");
+        assert_eq!(statuses[1].0, "Done");
     }
 }

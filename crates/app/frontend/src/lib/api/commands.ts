@@ -8,6 +8,7 @@ import type {
   Notification,
   PhotoRecord,
   PlayerSession,
+  SelfPlayer,
   Settings,
   Video,
   Visit
@@ -92,4 +93,12 @@ export function listRecentNotifications(limit: number): Promise<Notification[]> 
 /** 直近 `limit` 件の動画 URL を `detectedUtc` 降順で取得。 */
 export function listRecentVideos(limit: number): Promise<Video[]> {
   return invoke('list_recent_videos', { limit });
+}
+
+/**
+ * 直近の `User Authenticated` ログから抽出した「現在の自分」を取得。
+ * VRChat に未ログインなら displayName=null。layout 等で表示するために使う。
+ */
+export function getSelfPlayer(): Promise<SelfPlayer> {
+  return invoke('get_self_player');
 }

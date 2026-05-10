@@ -111,6 +111,13 @@ export interface Visit {
   duration: string;
 }
 
+// `get_self_player` の戻り値。1 度も VRChat にログインしていなければ
+// displayName は null。
+export interface SelfPlayer {
+  displayName: string | null;
+  authenticatedUtc: string | null;
+}
+
 // `list_players_for_visit` の戻り値要素。/history visit 詳細パネル用。
 export interface PlayerSession {
   id: number;

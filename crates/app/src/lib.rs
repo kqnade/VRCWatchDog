@@ -111,6 +111,7 @@ pub fn run() {
             commands::get_settings,
             commands::save_settings,
             commands::get_initial_warnings,
+            commands::get_self_player,
             commands::list_recent_photos,
             commands::list_photos_for_visit,
             commands::list_recent_visits,

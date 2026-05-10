@@ -10,5 +10,6 @@ pub mod player_sessions;
 pub mod processed_log_files;
 pub mod projected_raw_events;
 pub mod raw_log;
+pub mod self_player_records;
 pub mod video_records;
 pub mod world_visits;

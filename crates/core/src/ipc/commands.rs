@@ -195,6 +195,34 @@ impl From<VisitWithCounts> for VisitDto {
     }
 }
 
+/// `get_self_player` command の戻り値。
+/// 1 度も VRChat にログインしていなければ `display_name` は None で返す。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SelfPlayerDto {
+    pub display_name: Option<String>,
+    /// 直近の `User Authenticated` イベント発生時刻 (UTC)。display_name と対になる。
+    pub authenticated_utc: Option<DateTime<Utc>>,
+}
+
+impl SelfPlayerDto {
+    pub fn empty() -> Self {
+        Self {
+            display_name: None,
+            authenticated_utc: None,
+        }
+    }
+}
+
+impl From<crate::db::repo::self_player_records::SelfPlayerRecord> for SelfPlayerDto {
+    fn from(r: crate::db::repo::self_player_records::SelfPlayerRecord) -> Self {
+        Self {
+            display_name: Some(r.display_name),
+            authenticated_utc: Some(r.authenticated_utc),
+        }
+    }
+}
+
 /// `list_players_for_visit` command の戻り値要素。/history visit 詳細パネル用。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

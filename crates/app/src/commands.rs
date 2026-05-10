@@ -18,11 +18,13 @@ use tauri::{AppHandle, State};
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_opener::OpenerExt;
 use vrcwatchdog_core::db::repo::{
-    notification_records, photo_records, player_sessions, video_records, world_visits,
+    notification_records, photo_records, player_sessions, self_player_records, video_records,
+    world_visits,
 };
 use vrcwatchdog_core::ipc::commands as core_cmd;
 use vrcwatchdog_core::ipc::commands::{
-    InitialWarnings, NotificationDto, PhotoRecordDto, PlayerSessionDto, VideoDto, VisitDto,
+    InitialWarnings, NotificationDto, PhotoRecordDto, PlayerSessionDto, SelfPlayerDto, VideoDto,
+    VisitDto,
 };
 use vrcwatchdog_core::ipc::events::{OneDriveWarning, SettingsCorruptWarning};
 use vrcwatchdog_core::settings::Settings;
@@ -224,6 +226,23 @@ pub async fn list_recent_notifications(
         .map_err(|e| e.to_string())?;
     tx.commit().await.map_err(|e| format!("commit tx: {e}"))?;
     Ok(rows.into_iter().map(NotificationDto::from).collect())
+}
+
+/// 直近の `User Authenticated` イベントから抽出した「現在の自分」を返す。
+/// 1 度も認証していない場合は display_name が None。UI ヘッダーやログイン状態
+/// 表示で使う。
+#[tauri::command]
+pub async fn get_self_player(state: State<'_, AppState>) -> Result<SelfPlayerDto, String> {
+    let mut tx = state
+        .db_pool
+        .begin()
+        .await
+        .map_err(|e| format!("begin tx: {e}"))?;
+    let row = self_player_records::fetch_latest(&mut tx)
+        .await
+        .map_err(|e| e.to_string())?;
+    tx.commit().await.map_err(|e| format!("commit tx: {e}"))?;
+    Ok(row.map(SelfPlayerDto::from).unwrap_or_else(SelfPlayerDto::empty))
 }
 
 /// 起動時に Bootstrap が検出済みの警告 (settings corrupt / DB OneDrive sync) を返す。
