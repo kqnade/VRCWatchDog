@@ -169,6 +169,8 @@ pub struct VisitDto {
     pub left_utc: Option<DateTime<Utc>>,
     pub resolution_state: String,
     pub photo_count: i64,
+    /// 同 visit に居た player の unique 数 (`COUNT(DISTINCT COALESCE(user_id, display_name))`)。
+    pub player_count: i64,
     /// `HH:MM:SS` または `"ongoing"`。
     pub duration: String,
 }
@@ -187,7 +189,31 @@ impl From<VisitWithCounts> for VisitDto {
             left_utc: v.left_utc,
             resolution_state: v.resolution_state,
             photo_count: v.photo_count,
+            player_count: v.player_count,
             duration,
+        }
+    }
+}
+
+/// `list_players_for_visit` command の戻り値要素。/history visit 詳細パネル用。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlayerSessionDto {
+    pub id: i64,
+    pub display_name: String,
+    pub user_id: Option<String>,
+    pub joined_utc: DateTime<Utc>,
+    pub left_utc: Option<DateTime<Utc>>,
+}
+
+impl From<crate::db::repo::player_sessions::PlayerSessionView> for PlayerSessionDto {
+    fn from(v: crate::db::repo::player_sessions::PlayerSessionView) -> Self {
+        Self {
+            id: v.id,
+            display_name: v.display_name,
+            user_id: v.user_id,
+            joined_utc: v.joined_utc,
+            left_utc: v.left_utc,
         }
     }
 }

@@ -18,11 +18,11 @@ use tauri::{AppHandle, State};
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_opener::OpenerExt;
 use vrcwatchdog_core::db::repo::{
-    notification_records, photo_records, video_records, world_visits,
+    notification_records, photo_records, player_sessions, video_records, world_visits,
 };
 use vrcwatchdog_core::ipc::commands as core_cmd;
 use vrcwatchdog_core::ipc::commands::{
-    InitialWarnings, NotificationDto, PhotoRecordDto, VideoDto, VisitDto,
+    InitialWarnings, NotificationDto, PhotoRecordDto, PlayerSessionDto, VideoDto, VisitDto,
 };
 use vrcwatchdog_core::ipc::events::{OneDriveWarning, SettingsCorruptWarning};
 use vrcwatchdog_core::settings::Settings;
@@ -149,6 +149,26 @@ pub async fn list_photos_for_visit(
         .into_iter()
         .map(|r| PhotoRecordDto::from_record(r, Some(thumb_dir)))
         .collect())
+}
+
+/// 指定 visit に紐づく player_sessions を `joined_utc` 昇順 (入室順) で最大 `limit` 件返す。
+/// /history の visit 詳細パネルで co-player 一覧を表示するために使う。
+#[tauri::command]
+pub async fn list_players_for_visit(
+    visit_id: i64,
+    limit: i64,
+    state: State<'_, AppState>,
+) -> Result<Vec<PlayerSessionDto>, String> {
+    let mut tx = state
+        .db_pool
+        .begin()
+        .await
+        .map_err(|e| format!("begin tx: {e}"))?;
+    let rows = player_sessions::list_for_visit(&mut tx, visit_id, limit)
+        .await
+        .map_err(|e| e.to_string())?;
+    tx.commit().await.map_err(|e| format!("commit tx: {e}"))?;
+    Ok(rows.into_iter().map(PlayerSessionDto::from).collect())
 }
 
 /// 直近の visit を `joined_utc` 降順で最大 `limit` 件、photo_count 付きで返す。

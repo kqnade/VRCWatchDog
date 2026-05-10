@@ -106,7 +106,19 @@ export interface Visit {
   leftUtc: string | null;
   resolutionState: string;
   photoCount: number;
+  /** 同 visit に居た player の unique 数 (user_id か display_name でユニーク化)。 */
+  playerCount: number;
   duration: string;
+}
+
+// `list_players_for_visit` の戻り値要素。/history visit 詳細パネル用。
+export interface PlayerSession {
+  id: number;
+  displayName: string;
+  userId: string | null;
+  joinedUtc: string;
+  /** null なら visit 終了まで居続けたか、未終了の visit。 */
+  leftUtc: string | null;
 }
 
 // Settings は core::settings::store::Settings と一致させる (snake_case)。

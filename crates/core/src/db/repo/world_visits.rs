@@ -356,8 +356,10 @@ pub async fn finalize_active_on_process_exit(
 
 /// `list_recent_with_photo_counts` の戻り値要素。activity_history 画面用。
 ///
-/// `photo_count` は `photo_records` を `world_visit_id` で外部結合してカウントしたもの。
-/// 0 件 (写真なし visit) でも row は返る (LEFT JOIN + COUNT)。
+/// `photo_count` は `photo_records`、`player_count` は `player_sessions` を
+/// `world_visit_id` で外部結合してカウントしたもの。0 件でも row は返る
+/// (相関サブクエリ式なので LEFT JOIN の cartesian 倍化は発生しない)。
+/// `player_count` は `(user_id, display_name)` でユニーク化 (= 同じ人の re-join を 1 と数える)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VisitWithCounts {
     pub id: i64,
@@ -367,10 +369,14 @@ pub struct VisitWithCounts {
     pub left_utc: Option<DateTime<Utc>>,
     pub resolution_state: String,
     pub photo_count: i64,
+    pub player_count: i64,
 }
 
 /// 直近の visit を `joined_utc DESC` で最大 `limit` 件返す。各 row には紐づく
-/// `photo_records` の件数を `LEFT JOIN + COUNT` で同梱する。
+/// `photo_records` / `player_sessions` の件数を相関サブクエリで同梱する。
+///
+/// 2 LEFT JOIN + GROUP BY だと photo×player の cartesian で count が膨らむため、
+/// 各 count を独立した相関サブクエリで取る (件数が 100 件オーダーなので問題なし)。
 ///
 /// `limit <= 0` は空 vec (他 repo helpers と揃えた防衛)。
 pub async fn list_recent_with_photo_counts(
@@ -388,10 +394,13 @@ pub async fn list_recent_with_photo_counts(
                 v.joined_utc AS joined_utc,
                 v.left_utc AS left_utc,
                 v.resolution_state AS resolution_state,
-                COUNT(pr.id) AS photo_count
+                (SELECT COUNT(*)
+                   FROM photo_records pr
+                   WHERE pr.world_visit_id = v.id) AS photo_count,
+                (SELECT COUNT(DISTINCT COALESCE(ps.user_id, ps.display_name))
+                   FROM player_sessions ps
+                   WHERE ps.world_visit_id = v.id) AS player_count
          FROM world_visits v
-         LEFT JOIN photo_records pr ON pr.world_visit_id = v.id
-         GROUP BY v.id
          ORDER BY v.joined_utc DESC
          LIMIT ?1",
     )
@@ -409,6 +418,7 @@ pub async fn list_recent_with_photo_counts(
             left_utc: row.try_get("left_utc")?,
             resolution_state: row.try_get("resolution_state")?,
             photo_count: row.try_get("photo_count")?,
+            player_count: row.try_get("player_count")?,
         });
     }
     Ok(out)
@@ -886,6 +896,97 @@ mod tests {
         assert_eq!(rows[0].photo_count, 0);
         assert_eq!(rows[1].world_name, "A");
         assert_eq!(rows[1].photo_count, 3);
+    }
+
+    /// player_sessions に visit_id 付きで N 件 attach する helper。
+    /// 各セッションは distinct な user_id にして player_count の DISTINCT を確認できる。
+    async fn attach_n_players(pool: &sqlx::SqlitePool, visit_id: i64, count: usize) {
+        use crate::db::repo::player_sessions::insert_join as insert_player;
+        let mut tx = pool.begin().await.unwrap();
+        let pf_id: i64 = sqlx::query_scalar("SELECT id FROM processed_log_files LIMIT 1")
+            .fetch_one(&mut *tx)
+            .await
+            .unwrap();
+        for i in 0..count {
+            let raw_id = raw_log::insert_batch_with_ledger(
+                &mut tx,
+                &[crate::db::repo::raw_log::RawEventInput {
+                    processed_log_file_id: pf_id,
+                    byte_offset: (1000 + i as i64),
+                    event: LogEvent::PlayerJoined {
+                        display_name: format!("P{i}"),
+                        user_id: Some(format!("usr_{i}")),
+                    },
+                    naive_local: Some(nd(2026, 5, 9, 21, 0, 0)),
+                }],
+            )
+            .await
+            .unwrap()[0];
+            insert_player(
+                &mut tx,
+                raw_id,
+                visit_id,
+                &format!("P{i}"),
+                Some(&format!("usr_{i}")),
+                nd(2026, 5, 9, 21, 0, 0),
+                ctx(),
+            )
+            .await
+            .unwrap();
+        }
+        tx.commit().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn list_recent_with_photo_counts_includes_player_count_distinct_by_user_id() {
+        // Arrange: 2 visits、片方 3 player attach、もう片方 0 player
+        let (pool, _dir) = fresh_pool().await;
+        let mut tx = pool.begin().await.unwrap();
+        let pf = seed_pf(&mut tx).await;
+        let raw1 = seed_raw(
+            &mut tx,
+            pf,
+            0,
+            LogEvent::RoomEntering {
+                world_name: "WithPlayers".into(),
+            },
+        )
+        .await;
+        let raw2 = seed_raw(
+            &mut tx,
+            pf,
+            10,
+            LogEvent::RoomEntering {
+                world_name: "Empty".into(),
+            },
+        )
+        .await;
+        let v1 = insert_pending(
+            &mut tx,
+            raw1,
+            "WithPlayers",
+            nd(2026, 5, 9, 12, 0, 0),
+            ctx(),
+            None,
+        )
+        .await
+        .unwrap();
+        let _v2 = insert_pending(&mut tx, raw2, "Empty", nd(2026, 5, 9, 13, 0, 0), ctx(), None)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        attach_n_players(&pool, v1, 3).await;
+
+        // Act
+        let mut tx = pool.begin().await.unwrap();
+        let rows = list_recent_with_photo_counts(&mut tx, 100).await.unwrap();
+
+        // Assert: newest first → Empty (count=0), WithPlayers (count=3)
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].world_name, "Empty");
+        assert_eq!(rows[0].player_count, 0);
+        assert_eq!(rows[1].world_name, "WithPlayers");
+        assert_eq!(rows[1].player_count, 3);
     }
 
     #[tokio::test]

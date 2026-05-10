@@ -114,6 +114,7 @@ pub fn run() {
             commands::list_recent_photos,
             commands::list_photos_for_visit,
             commands::list_recent_visits,
+            commands::list_players_for_visit,
             commands::list_recent_notifications,
             commands::list_recent_videos,
         ])

@@ -4,12 +4,25 @@
 //! `left_*` を埋める。マッチングキーは `(world_visit_id, user_id)` を優先、
 //! `user_id` が無いログ (旧 VRChat) では `(world_visit_id, display_name)` で補完。
 
-use chrono::NaiveDateTime;
-use sqlx::{Sqlite, Transaction};
+use chrono::{DateTime, NaiveDateTime, Utc};
+use sqlx::{Row, Sqlite, Transaction};
 
 use super::world_visits::TimeContext;
 use crate::time::resolve_local_to_utc;
 use crate::Result;
+
+/// `list_for_visit` の戻り値。/history visit 詳細パネルで co-player 一覧表示用。
+///
+/// joined_utc / left_utc は UI で表示するだけなので tz 詳細 (offset / resolution) は省略。
+/// `left_utc` が None なら「まだ visit から退室していない (= 同居中で終了)」。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlayerSessionView {
+    pub id: i64,
+    pub display_name: String,
+    pub user_id: Option<String>,
+    pub joined_utc: DateTime<Utc>,
+    pub left_utc: Option<DateTime<Utc>>,
+}
 
 fn parse_tz(tz_id: &str) -> Result<chrono_tz::Tz> {
     tz_id
@@ -127,6 +140,41 @@ pub async fn set_left(
     .execute(&mut **tx)
     .await?;
     Ok(result.rows_affected())
+}
+
+/// 指定 visit の player_sessions を `joined_utc` 昇順 (= 入室順) で返す。
+/// `limit <= 0` は空 vec (他 helpers と揃え)。
+pub async fn list_for_visit(
+    tx: &mut Transaction<'_, Sqlite>,
+    visit_id: i64,
+    limit: i64,
+) -> Result<Vec<PlayerSessionView>> {
+    if limit <= 0 {
+        return Ok(Vec::new());
+    }
+    let rows = sqlx::query(
+        "SELECT id, display_name, user_id, joined_utc, left_utc
+         FROM player_sessions
+         WHERE world_visit_id = ?1
+         ORDER BY joined_utc ASC
+         LIMIT ?2",
+    )
+    .bind(visit_id)
+    .bind(limit)
+    .fetch_all(&mut **tx)
+    .await?;
+
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        out.push(PlayerSessionView {
+            id: row.try_get("id")?,
+            display_name: row.try_get("display_name")?,
+            user_id: row.try_get("user_id")?,
+            joined_utc: row.try_get("joined_utc")?,
+            left_utc: row.try_get("left_utc")?,
+        });
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -333,6 +381,98 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(updated, 1);
+    }
+
+    // -- list_for_visit (Phase A4) -------------------------------------------
+
+    /// 不変条件: list_for_visit は visit に紐づく session を joined_utc 昇順で返す。
+    #[tokio::test]
+    async fn list_for_visit_returns_co_players_in_join_order() {
+        // Arrange: visit 1 つ + プレイヤー 3 人を joined 時刻バラバラに insert
+        let (pool, _dir) = setup().await;
+        let visit_id = seed_visit(&pool).await;
+        let raw1 = seed_player_raw(&pool, 100).await;
+        let raw2 = seed_player_raw(&pool, 200).await;
+        let raw3 = seed_player_raw(&pool, 300).await;
+
+        let mut tx = pool.begin().await.unwrap();
+        // 後の時刻を先に insert して sort が効いていることを確認
+        insert_join(
+            &mut tx,
+            raw1,
+            visit_id,
+            "Charlie",
+            Some("usr_ccc"),
+            nd(22, 0, 0),
+            ctx(),
+        )
+        .await
+        .unwrap();
+        insert_join(
+            &mut tx,
+            raw2,
+            visit_id,
+            "Alice",
+            Some("usr_aaa"),
+            nd(20, 0, 0),
+            ctx(),
+        )
+        .await
+        .unwrap();
+        insert_join(
+            &mut tx,
+            raw3,
+            visit_id,
+            "Bob",
+            Some("usr_bbb"),
+            nd(21, 0, 0),
+            ctx(),
+        )
+        .await
+        .unwrap();
+
+        // Act
+        let players = list_for_visit(&mut tx, visit_id, 100).await.unwrap();
+
+        // Assert: joined_utc 昇順 = Alice (20), Bob (21), Charlie (22)
+        let names: Vec<_> = players.iter().map(|p| p.display_name.as_str()).collect();
+        assert_eq!(names, vec!["Alice", "Bob", "Charlie"]);
+    }
+
+    #[tokio::test]
+    async fn list_for_visit_returns_empty_for_visit_with_no_players() {
+        let (pool, _dir) = setup().await;
+        let visit_id = seed_visit(&pool).await;
+        let mut tx = pool.begin().await.unwrap();
+
+        let players = list_for_visit(&mut tx, visit_id, 100).await.unwrap();
+
+        assert!(players.is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_for_visit_returns_empty_when_limit_is_zero_or_negative() {
+        let (pool, _dir) = setup().await;
+        let visit_id = seed_visit(&pool).await;
+        let raw = seed_player_raw(&pool, 100).await;
+        let mut tx = pool.begin().await.unwrap();
+        insert_join(
+            &mut tx,
+            raw,
+            visit_id,
+            "X",
+            Some("usr_x"),
+            nd(20, 0, 0),
+            ctx(),
+        )
+        .await
+        .unwrap();
+
+        let zero = list_for_visit(&mut tx, visit_id, 0).await.unwrap();
+        let neg = list_for_visit(&mut tx, visit_id, -1).await.unwrap();
+
+        assert!(zero.is_empty());
+        assert!(neg.is_empty());
     }
 
     /// 不変条件: PlayerLeft で該当する session が無いと 0 行更新。

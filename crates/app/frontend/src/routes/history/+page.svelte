@@ -2,8 +2,13 @@
   import { convertFileSrc } from '@tauri-apps/api/core';
   import { onMount, tick } from 'svelte';
   import { page } from '$app/stores';
-  import { listPhotosForVisit, listRecentVisits, openPhoto } from '$lib/api/commands';
-  import type { PhotoRecord, Visit } from '$lib/api/types';
+  import {
+    listPhotosForVisit,
+    listPlayersForVisit,
+    listRecentVisits,
+    openPhoto,
+  } from '$lib/api/commands';
+  import type { PhotoRecord, PlayerSession, Visit } from '$lib/api/types';
 
   // Phase 6.4 + A2: world_visits の活動履歴。
   // - クリックで展開、紐づく写真サムネ strip を inline 表示。
@@ -14,12 +19,15 @@
 
   // 展開中の visit id (1 件のみ展開、Map にすれば複数同時展開も可)
   let expandedVisitId = $state<number | null>(null);
-  // 展開時に fetch した写真 (visit_id ごとに cache)
+  // 展開時に fetch した写真 / プレイヤー (visit_id ごとに cache)
   let photoCache = $state<Record<number, PhotoRecord[]>>({});
+  let playerCache = $state<Record<number, PlayerSession[]>>({});
   let photoLoadError = $state<string | null>(null);
+  let playerLoadError = $state<string | null>(null);
 
   const PAGE_SIZE = 100;
   const PHOTOS_PER_VISIT = 24; // 展開時に表示する最大件数
+  const PLAYERS_PER_VISIT = 200;
 
   function badgeClass(state: string): string {
     switch (state) {
@@ -71,18 +79,33 @@
     }
   }
 
+  async function ensurePlayersLoaded(visitId: number): Promise<void> {
+    if (playerCache[visitId] !== undefined) return;
+    try {
+      const players = await listPlayersForVisit(visitId, PLAYERS_PER_VISIT);
+      playerCache = { ...playerCache, [visitId]: players };
+      playerLoadError = null;
+    } catch (e) {
+      playerLoadError = `プレイヤー読込に失敗: ${e}`;
+    }
+  }
+
+  async function loadVisitDetails(visit: Visit): Promise<void> {
+    const tasks: Promise<void>[] = [];
+    if (visit.photoCount > 0) tasks.push(ensurePhotosLoaded(visit.id));
+    else photoCache = { ...photoCache, [visit.id]: [] };
+    if (visit.playerCount > 0) tasks.push(ensurePlayersLoaded(visit.id));
+    else playerCache = { ...playerCache, [visit.id]: [] };
+    await Promise.all(tasks);
+  }
+
   async function toggleExpand(visit: Visit): Promise<void> {
     if (expandedVisitId === visit.id) {
       expandedVisitId = null;
       return;
     }
     expandedVisitId = visit.id;
-    // photoCount=0 ならわざわざ fetch しない (空 array 確定)
-    if (visit.photoCount > 0) {
-      await ensurePhotosLoaded(visit.id);
-    } else {
-      photoCache = { ...photoCache, [visit.id]: [] };
-    }
+    await loadVisitDetails(visit);
   }
 
   function onRowKey(visit: Visit, ev: KeyboardEvent): void {
@@ -109,9 +132,7 @@
     const visit = visits.find((v) => v.id === id);
     if (!visit) return;
     expandedVisitId = id;
-    if (visit.photoCount > 0) {
-      await ensurePhotosLoaded(id);
-    }
+    await loadVisitDetails(visit);
     await tick();
     document.getElementById(`visit-${id}`)?.scrollIntoView({ block: 'center' });
   }
@@ -179,7 +200,7 @@
               {visit.resolutionState}
             </span>
           </div>
-          <div class="mt-2 grid grid-cols-3 gap-4 text-xs">
+          <div class="mt-2 grid grid-cols-4 gap-4 text-xs">
             <div>
               <span class="block uppercase tracking-wider opacity-55">Joined</span>
               <span class="font-mono">{formatJoined(visit.joinedUtc)}</span>
@@ -192,6 +213,10 @@
               <span class="block uppercase tracking-wider opacity-55">Photos</span>
               <span class="font-mono">{visit.photoCount}</span>
             </div>
+            <div>
+              <span class="block uppercase tracking-wider opacity-55">Players</span>
+              <span class="font-mono">{visit.playerCount}</span>
+            </div>
           </div>
           {#if visit.worldId}
             <p class="mt-2 truncate font-mono text-xs opacity-55" title={visit.worldId}>
@@ -201,47 +226,82 @@
         </div>
 
         {#if isExpanded}
-          <div class="border-t px-3 py-3">
-            {#if photoLoadError}
-              <p class="mb-2 text-xs text-destructive">{photoLoadError}</p>
-            {/if}
-            {#if visit.photoCount === 0}
-              <p class="text-xs opacity-55">この visit に紐づく写真はありません</p>
-            {:else if photos === undefined}
-              <p class="text-xs opacity-55">読込中…</p>
-            {:else if photos.length === 0}
-              <p class="text-xs opacity-55">写真は 0 件です</p>
-            {:else}
-              <div
-                class="grid gap-2"
-                style="grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));"
-              >
-                {#each photos as photo (photo.id)}
-                  <button
-                    type="button"
-                    class="group flex aspect-video items-center justify-center overflow-hidden rounded bg-muted text-[10px] opacity-90 transition hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring"
-                    onclick={() => handleOpenPhoto(photo)}
-                    title={photo.fileName}
-                  >
-                    {#if photo.thumbPath}
-                      <img
-                        src={convertFileSrc(photo.thumbPath)}
-                        alt={photo.fileName}
-                        class="h-full w-full object-cover"
-                        loading="lazy"
-                      />
-                    {:else}
-                      no thumb
-                    {/if}
-                  </button>
-                {/each}
-              </div>
-              {#if visit.photoCount > photos.length}
-                <p class="mt-2 text-[11px] opacity-55">
-                  ({photos.length} / {visit.photoCount} 件表示)
-                </p>
+          {@const players = playerCache[visit.id]}
+          <div class="space-y-4 border-t px-3 py-3">
+            <!-- players section -->
+            <section>
+              <h3 class="mb-2 text-xs font-semibold uppercase tracking-wider opacity-55">
+                Players ({visit.playerCount})
+              </h3>
+              {#if playerLoadError}
+                <p class="mb-2 text-xs text-destructive">{playerLoadError}</p>
               {/if}
-            {/if}
+              {#if visit.playerCount === 0}
+                <p class="text-xs opacity-55">co-player の記録はありません</p>
+              {:else if players === undefined}
+                <p class="text-xs opacity-55">読込中…</p>
+              {:else}
+                <div class="flex flex-wrap gap-1.5">
+                  {#each players as p (p.id)}
+                    <span
+                      class="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground"
+                      title={p.userId
+                        ? `${p.userId} · joined ${formatJoined(p.joinedUtc)}${p.leftUtc ? ` / left ${formatJoined(p.leftUtc)}` : ' / 退出ログ無し'}`
+                        : `joined ${formatJoined(p.joinedUtc)}${p.leftUtc ? ` / left ${formatJoined(p.leftUtc)}` : ' / 退出ログ無し'}`}
+                    >
+                      {p.displayName}
+                    </span>
+                  {/each}
+                </div>
+              {/if}
+            </section>
+
+            <!-- photos section -->
+            <section>
+              <h3 class="mb-2 text-xs font-semibold uppercase tracking-wider opacity-55">
+                Photos ({visit.photoCount})
+              </h3>
+              {#if photoLoadError}
+                <p class="mb-2 text-xs text-destructive">{photoLoadError}</p>
+              {/if}
+              {#if visit.photoCount === 0}
+                <p class="text-xs opacity-55">この visit に紐づく写真はありません</p>
+              {:else if photos === undefined}
+                <p class="text-xs opacity-55">読込中…</p>
+              {:else if photos.length === 0}
+                <p class="text-xs opacity-55">写真は 0 件です</p>
+              {:else}
+                <div
+                  class="grid gap-2"
+                  style="grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));"
+                >
+                  {#each photos as photo (photo.id)}
+                    <button
+                      type="button"
+                      class="group flex aspect-video items-center justify-center overflow-hidden rounded bg-muted text-[10px] opacity-90 transition hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring"
+                      onclick={() => handleOpenPhoto(photo)}
+                      title={photo.fileName}
+                    >
+                      {#if photo.thumbPath}
+                        <img
+                          src={convertFileSrc(photo.thumbPath)}
+                          alt={photo.fileName}
+                          class="h-full w-full object-cover"
+                          loading="lazy"
+                        />
+                      {:else}
+                        no thumb
+                      {/if}
+                    </button>
+                  {/each}
+                </div>
+                {#if visit.photoCount > photos.length}
+                  <p class="mt-2 text-[11px] opacity-55">
+                    ({photos.length} / {visit.photoCount} 件表示)
+                  </p>
+                {/if}
+              {/if}
+            </section>
           </div>
         {/if}
       </li>

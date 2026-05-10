@@ -7,6 +7,7 @@ import type {
   InitialWarnings,
   Notification,
   PhotoRecord,
+  PlayerSession,
   Settings,
   Video,
   Visit
@@ -73,6 +74,14 @@ export function listRecentVisits(limit: number): Promise<Visit[]> {
  */
 export function listPhotosForVisit(visitId: number, limit: number): Promise<PhotoRecord[]> {
   return invoke('list_photos_for_visit', { visitId, limit });
+}
+
+/**
+ * 指定 visit に居た player_sessions を `joinedUtc` 昇順で最大 `limit` 件取得。
+ * /history で visit を展開したときに co-player 一覧を表示するために使う。
+ */
+export function listPlayersForVisit(visitId: number, limit: number): Promise<PlayerSession[]> {
+  return invoke('list_players_for_visit', { visitId, limit });
 }
 
 /** 直近 `limit` 件の通知を `receivedUtc` 降順で取得。 */
