@@ -179,11 +179,15 @@ fn row_to_photo_record(row: &sqlx::sqlite::SqliteRow) -> Result<PhotoRecord> {
     })
 }
 
-/// `thumb_sha` がまだ埋まっていない (= サムネ未生成) row を id 昇順で最大 `limit` 件返す。
+/// `thumb_sha` がまだ埋まっていない (= サムネ未生成) row を **新しい順** で最大
+/// `limit` 件返す (`taken_utc DESC`、tiebreak は `id DESC`)。
 ///
 /// thumb_writer actor が worker loop で「次に処理すべき photo」を取り出すための query。
-/// 戻り値は処理に必要な最小フィールド (id, file_path) のみで、photo_records 全列は読まない。
+/// /photos ページが新しい順に表示するため、ユーザー目線では今見たい写真から優先的に
+/// サムネが生成されるのが自然。古い写真は後回し (見えていれば sub-second で出る、
+/// 未表示なら気にされない)。
 ///
+/// 戻り値は処理に必要な最小フィールド (id, file_path) のみで、photo_records 全列は読まない。
 /// `limit <= 0` なら空 vec (`list_recent` と同じ防衛)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ThumblessPhotoRow {
@@ -203,7 +207,7 @@ pub async fn list_thumbless(
         "SELECT id, file_path
          FROM photo_records
          WHERE thumb_sha IS NULL
-         ORDER BY id ASC
+         ORDER BY taken_utc DESC, id DESC
          LIMIT ?1",
     )
     .bind(limit)
@@ -569,18 +573,19 @@ mod tests {
         // Act
         let rows = list_thumbless(&mut tx, 100).await.unwrap();
 
-        // Assert: a と c が残り、id 昇順
+        // Assert: a と c が残り、taken_utc DESC (= 新しい順)
+        // a: 12:00, b (skipped): 13:00, c: 14:00 → c が先 (14:00) → a (12:00)
         let ids: Vec<_> = rows.iter().map(|r| r.id).collect();
         assert_eq!(
             ids,
-            vec![id_a, id_c],
-            "thumb_sha が NULL の行だけ id ASC で返る"
+            vec![id_c, id_a],
+            "thumb_sha が NULL の行だけ taken_utc DESC で返る (新しい順)"
         );
     }
 
     #[tokio::test]
-    async fn list_thumbless_respects_limit_and_returns_oldest_n_first() {
-        // Arrange: 5 件 insert (全部 thumb_sha=NULL)
+    async fn list_thumbless_respects_limit_and_returns_newest_n_first() {
+        // Arrange: 5 件 insert (全部 thumb_sha=NULL)、taken_utc がバラバラ
         let (pool, _dir) = fresh_pool().await;
         let mut tx = pool.begin().await.unwrap();
         for i in 0..5 {
@@ -595,7 +600,7 @@ mod tests {
             .unwrap();
         }
 
-        // Act: limit=2 なら id 昇順で先頭 2 件
+        // Act: limit=2 なら taken_utc DESC で 2 件 = 新しい 2 件
         let rows = list_thumbless(&mut tx, 2).await.unwrap();
 
         // Assert
@@ -612,8 +617,8 @@ mod tests {
             .collect();
         assert_eq!(
             names,
-            vec!["0.png", "1.png"],
-            "id 昇順で oldest 2 件 (= 古い photo を先に処理)"
+            vec!["4.png", "3.png"],
+            "taken_utc DESC で newest 2 件 (ユーザーが先に見たい順)"
         );
     }
 
