@@ -167,6 +167,9 @@ export interface Settings {
   thumbnail_cache_dir: string | null;
   locale: string;
   autostart_enabled: boolean;
+  /** "light" | "dark" | "system" */
   theme: string;
+  /** "violet" | "blue" | "teal" | "green" | "amber" | "rose" | "slate" | "indigo" */
+  accent_color: string;
   notification_enabled: boolean;
 }

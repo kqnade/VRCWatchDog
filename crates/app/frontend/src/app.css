@@ -1,56 +1,150 @@
 /* Tailwind v4 entry. config-less: `@import` だけで本体 + preflight + components が入る。 */
 @import 'tailwindcss';
-
-/* tw-animate-css: Tailwind v4 互換のアニメーション utility (shadcn-svelte が依存)。 */
 @import 'tw-animate-css';
 
-/* dark variant: shadcn-svelte の dark theme を `.dark` クラス起点で有効化する。
- * Phase 5d で全体を default-dark にしているので、root に `.dark` を付与する想定。
- * settings.theme で切替えるのは Phase 7。 */
+/* dark variant: `<html class="dark">` で起動。`.light` / `.dark` で切替。
+ * settings.theme に "system" が来たときは OS の prefers-color-scheme を尊重する形で
+ * frontend layout が runtime にクラスを付ける。 */
 @custom-variant dark (&:where(.dark, .dark *));
 
-/* Design tokens (shadcn-svelte 命名規約に整合)。
+/*
+ * Design tokens: CSS variable で定義し、.dark / .light クラスで上書きする。
+ * Tailwind v4 の `@theme` ディレクティブはコンパイル時にトークンを解決して utility
+ * を生成するが、runtime に変更したい (= テーマ切替したい) 場合は `@theme inline` を
+ * 使い、CSS variable を直接参照させる。これで `.dark` クラスを root に付け外しする
+ * だけで全 utility が新しい色に切り替わる。
  *
- * `@theme` は Tailwind v4 のテーマ機構: ここで宣言した CSS variable は同じ名前で
- * `bg-*` / `text-*` / `border-*` などの utility class を自動生成する。
- * 例: `--color-background: ...` → `bg-background`, `text-background`, `border-background`。
- *
- * shadcn-svelte 公式の命名規約 (background / foreground / card / muted / destructive 等)
- * をそのまま採用しているので、後で `pnpm dlx shadcn-svelte@latest add` で入れた
- * components はトークンの再定義なしにそのまま動く。
- *
- * warning は shadcn 標準には無いが VRCWatchDog 固有の警告 UI (settings corrupt /
- * OneDrive risk / DB backpressure) で頻用するので明示的に追加。 */
-@theme {
-  --color-background: #0b0b0c;
-  --color-foreground: #e5e5e5;
+ * shadcn-svelte 公式の token 命名 (background / foreground / card / muted /
+ * destructive / accent ...) に揃え、後で shadcn-svelte の component を入れても
+ * トークン再定義なしに動く。
+ */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-warning-bg: var(--warning-bg);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
 
-  --color-card: #131418;
-  --color-card-foreground: #e5e5e5;
-
-  --color-border: #2a2c33;
-  --color-input: #2a2c33;
-  --color-ring: #2a2c33;
-
-  --color-muted: #181a1d;
-  --color-muted-foreground: #888888;
-
-  --color-destructive: #ff6b6b;
-  --color-destructive-foreground: #fff5f5;
-
-  /* shadcn 標準には無い VRCWatchDog 固有 token */
-  --color-warning: #cd9f3a;
-  --color-warning-foreground: #f1c40f;
-  --color-warning-bg: #2a1f0f;
-
-  --color-success: #6ed28a;
+  --radius-sm: calc(var(--radius) - 2px);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) + 2px);
 }
 
-/* base layer: 上記 token を `html` / `body` に適用。Tailwind の Preflight が body
- * を margin:0 にするので、追加 reset は必要に応じて。 */
+/* Light theme (default). */
+:root {
+  --radius: 0.5rem;
+
+  /* accent palette default: data-accent="violet" 相当。settings 反映前のフラッシュ防止。 */
+  --accent-h: 270;
+  --accent-s: 76%;
+  --accent-l: 60%;
+  --accent: hsl(var(--accent-h) var(--accent-s) var(--accent-l));
+  --accent-foreground: hsl(0 0% 100%);
+  --primary: hsl(var(--accent-h) var(--accent-s) var(--accent-l));
+  --primary-foreground: hsl(0 0% 100%);
+  --ring: hsl(var(--accent-h) var(--accent-s) var(--accent-l) / 0.5);
+
+  --background: hsl(0 0% 100%);
+  --foreground: hsl(240 10% 3.9%);
+  --card: hsl(0 0% 100%);
+  --card-foreground: hsl(240 10% 3.9%);
+  --popover: hsl(0 0% 100%);
+  --popover-foreground: hsl(240 10% 3.9%);
+  --secondary: hsl(240 4.8% 95.9%);
+  --secondary-foreground: hsl(240 5.9% 10%);
+  --muted: hsl(240 4.8% 95.9%);
+  --muted-foreground: hsl(240 3.8% 46.1%);
+  --destructive: hsl(0 72% 51%);
+  --destructive-foreground: hsl(0 0% 98%);
+  --border: hsl(240 5.9% 90%);
+  --input: hsl(240 5.9% 90%);
+
+  --warning: hsl(38 92% 50%);
+  --warning-foreground: hsl(38 92% 25%);
+  --warning-bg: hsl(38 100% 96%);
+  --success: hsl(142 71% 45%);
+  --success-foreground: hsl(142 71% 20%);
+
+  --sidebar: hsl(240 4.8% 97.5%);
+  --sidebar-foreground: hsl(240 5.9% 10%);
+  --sidebar-border: hsl(240 5.9% 90%);
+  --sidebar-accent: hsl(240 4.8% 92%);
+  --sidebar-accent-foreground: hsl(240 10% 3.9%);
+
+  color-scheme: light;
+}
+
+/* Dark theme. root に .dark を付けて activate する。 */
+.dark {
+  --background: hsl(240 10% 4%);
+  --foreground: hsl(0 0% 95%);
+  --card: hsl(240 8% 8%);
+  --card-foreground: hsl(0 0% 95%);
+  --popover: hsl(240 8% 8%);
+  --popover-foreground: hsl(0 0% 95%);
+  --secondary: hsl(240 4% 16%);
+  --secondary-foreground: hsl(0 0% 95%);
+  --muted: hsl(240 4% 14%);
+  --muted-foreground: hsl(240 5% 60%);
+  --destructive: hsl(0 70% 55%);
+  --destructive-foreground: hsl(0 0% 98%);
+  --border: hsl(240 4% 18%);
+  --input: hsl(240 4% 18%);
+
+  --warning: hsl(38 92% 60%);
+  --warning-foreground: hsl(38 92% 78%);
+  --warning-bg: hsl(38 30% 15%);
+  --success: hsl(142 65% 55%);
+  --success-foreground: hsl(142 65% 80%);
+
+  --sidebar: hsl(240 8% 6%);
+  --sidebar-foreground: hsl(0 0% 90%);
+  --sidebar-border: hsl(240 4% 14%);
+  --sidebar-accent: hsl(240 4% 14%);
+  --sidebar-accent-foreground: hsl(0 0% 98%);
+
+  color-scheme: dark;
+}
+
+/* Accent palette: 8 色。data-accent="<name>" を root に立てると hue/sat/lit が切替わる。
+ * 値は OKLCH-相当の HSL 近似で、light / dark どちらでも視認性が出るように調整。 */
+:root[data-accent='violet'] { --accent-h: 270; --accent-s: 76%; --accent-l: 60%; }
+:root[data-accent='blue']   { --accent-h: 217; --accent-s: 91%; --accent-l: 60%; }
+:root[data-accent='teal']   { --accent-h: 173; --accent-s: 80%; --accent-l: 40%; }
+:root[data-accent='green']  { --accent-h: 142; --accent-s: 71%; --accent-l: 45%; }
+:root[data-accent='amber']  { --accent-h: 38;  --accent-s: 92%; --accent-l: 50%; }
+:root[data-accent='rose']   { --accent-h: 350; --accent-s: 89%; --accent-l: 60%; }
+:root[data-accent='slate']  { --accent-h: 215; --accent-s: 16%; --accent-l: 47%; }
+:root[data-accent='indigo'] { --accent-h: 239; --accent-s: 84%; --accent-l: 67%; }
+
+/* base layer: token を html / body に適用。 */
 @layer base {
-  :root {
-    color-scheme: dark;
+  * {
+    border-color: var(--color-border);
   }
 
   html,
@@ -58,9 +152,29 @@
     background: var(--color-background);
     color: var(--color-foreground);
     font-family:
+      'Inter',
       system-ui,
       -apple-system,
       'Segoe UI',
+      'Yu Gothic UI',
+      'Hiragino Sans',
       sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* scrollbar styling for the dark / light token. Webkit 専用 (Tauri WebView2 は Chromium)。 */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-muted);
+    border-radius: 6px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-muted-foreground);
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
   }
 }

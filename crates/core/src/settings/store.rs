@@ -24,8 +24,13 @@ pub struct Settings {
     pub locale: String,
     #[serde(default)]
     pub autostart_enabled: bool,
+    /// `dark` / `light` / `system` (system は OS の prefers-color-scheme に追従)。
     #[serde(default = "default_theme")]
     pub theme: String,
+    /// アクセントカラー。`violet` / `blue` / `teal` / `green` / `amber` / `rose` /
+    /// `slate` / `indigo` のいずれか。フロント側で `data-accent` 属性に設定する。
+    #[serde(default = "default_accent_color")]
+    pub accent_color: String,
     #[serde(default = "default_true")]
     pub notification_enabled: bool,
 }
@@ -35,6 +40,9 @@ fn default_locale() -> String {
 }
 fn default_theme() -> String {
     "dark".to_string()
+}
+fn default_accent_color() -> String {
+    "violet".to_string()
 }
 fn default_true() -> bool {
     true
@@ -49,6 +57,7 @@ impl Default for Settings {
             locale: default_locale(),
             autostart_enabled: false,
             theme: default_theme(),
+            accent_color: default_accent_color(),
             notification_enabled: true,
         }
     }

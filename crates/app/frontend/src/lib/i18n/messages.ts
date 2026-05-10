@@ -108,6 +108,14 @@ export interface Messages {
   settingsDirty: string;
   settingsThemeDark: string;
   settingsThemeLight: string;
+  settingsThemeSystem: string;
+  settingsAccentColor: string;
+  settingsAppearance: string;
+  settingsAppearanceDesc: string;
+  settingsPaths: string;
+  settingsPathsDesc: string;
+  settingsBehavior: string;
+  settingsBehaviorDesc: string;
 }
 
 export const messages: Record<Locale, Messages> = {
@@ -196,6 +204,14 @@ export const messages: Record<Locale, Messages> = {
     settingsDirty: '未保存の変更があります',
     settingsThemeDark: 'ダーク',
     settingsThemeLight: 'ライト',
+    settingsThemeSystem: 'システム',
+    settingsAccentColor: 'アクセントカラー',
+    settingsAppearance: '外観',
+    settingsAppearanceDesc: 'テーマ・色・言語の設定',
+    settingsPaths: 'ディレクトリ',
+    settingsPathsDesc: 'VRChat ログ・写真の保存先',
+    settingsBehavior: '動作',
+    settingsBehaviorDesc: '自動起動・通知の制御',
   },
   en: {
     appName: 'VRCWatchDog',
@@ -282,5 +298,13 @@ export const messages: Record<Locale, Messages> = {
     settingsDirty: 'Unsaved changes',
     settingsThemeDark: 'Dark',
     settingsThemeLight: 'Light',
+    settingsThemeSystem: 'System',
+    settingsAccentColor: 'Accent color',
+    settingsAppearance: 'Appearance',
+    settingsAppearanceDesc: 'Theme, color, and language',
+    settingsPaths: 'Directories',
+    settingsPathsDesc: 'VRChat log and photo locations',
+    settingsBehavior: 'Behavior',
+    settingsBehaviorDesc: 'Autostart and notifications',
   },
 };
