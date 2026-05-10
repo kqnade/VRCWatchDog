@@ -1,20 +1,42 @@
 <script lang="ts">
   import { convertFileSrc } from '@tauri-apps/api/core';
   import { onMount } from 'svelte';
+  import { FolderOpen, MapPin } from 'lucide-svelte';
   import { listRecentPhotos, openPhoto, openPhotoFolder } from '$lib/api/commands';
   import { i18n } from '$lib/i18n/use_t.svelte';
+  import PageHeader from '$lib/ui/PageHeader.svelte';
+  import Skeleton from '$lib/ui/Skeleton.svelte';
   import type { PhotoRecord } from '$lib/api/types';
 
-  // Phase 6.2.2: photo_grid 仮版。
-  // - サムネ生成 (Phase 6.3 thumb_writer) はまだ無いので、box にファイル名 + 撮影時刻 +
-  //   world_visit_id バッジを置くだけのプレースホルダ表示。
-  // - クリック → open_photo command で OS の関連付けされたアプリで開く。
-  // - 「フォルダで開く」ボタン → open_photo_folder で Explorer を開く。
   let photos = $state<PhotoRecord[]>([]);
   let loadError = $state<string | null>(null);
   let isLoading = $state(true);
 
-  const PAGE_SIZE = 100;
+  const PAGE_SIZE = 200;
+
+  function dayKey(iso: string): string {
+    const d = new Date(iso);
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  }
+
+  function formatDayLabel(key: string): string {
+    return key;
+  }
+
+  // 撮影日 (YYYY-MM-DD) で group。新しい順を維持。
+  const grouped = $derived.by<Array<{ day: string; items: PhotoRecord[] }>>(() => {
+    const map = new Map<string, PhotoRecord[]>();
+    for (const p of photos) {
+      const k = dayKey(p.takenUtc);
+      const arr = map.get(k);
+      if (arr) arr.push(p);
+      else map.set(k, [p]);
+    }
+    return [...map.entries()].map(([day, items]) => ({ day, items }));
+  });
 
   async function load() {
     isLoading = true;
@@ -28,28 +50,27 @@
     }
   }
 
-  async function handleOpen(photo: PhotoRecord) {
+  async function handleOpen(p: PhotoRecord) {
     try {
-      await openPhoto(photo.filePath);
+      await openPhoto(p.filePath);
     } catch (e) {
       loadError = `${i18n.t('photoOpenError')} ${e}`;
     }
   }
 
-  async function handleOpenFolder(photo: PhotoRecord, ev: MouseEvent | KeyboardEvent) {
+  async function handleOpenFolder(p: PhotoRecord, ev: MouseEvent | KeyboardEvent) {
     ev.stopPropagation();
     try {
-      await openPhotoFolder(photo.filePath);
+      await openPhotoFolder(p.filePath);
     } catch (e) {
       loadError = `${i18n.t('photoFolderOpenError')} ${e}`;
     }
   }
 
-  // div role="button" で keyboard 操作 (Enter/Space) もサポート
-  function onCardKey(photo: PhotoRecord, ev: KeyboardEvent) {
+  function onCardKey(p: PhotoRecord, ev: KeyboardEvent) {
     if (ev.key === 'Enter' || ev.key === ' ') {
       ev.preventDefault();
-      void handleOpen(photo);
+      void handleOpen(p);
     }
   }
 
@@ -58,85 +79,88 @@
   });
 </script>
 
-<main class="mx-auto min-h-screen max-w-6xl p-8">
-  <header class="mb-6 flex items-baseline justify-between">
-    <div>
-      <h1 class="text-2xl font-semibold">{i18n.t('photosTitle')}</h1>
-      <p class="mt-1 text-sm opacity-60">
-        {#if isLoading}
-          {i18n.t('loading')}
-        {:else}
-          {i18n.t('photosCountFormat', { count: photos.length, max: PAGE_SIZE })}
-        {/if}
-      </p>
-    </div>
-    <a href="/" class="text-sm text-muted-foreground hover:underline">{i18n.t('navHomeBack')}</a>
-  </header>
+<PageHeader
+  title={i18n.t('photosTitle')}
+  description={isLoading
+    ? i18n.t('loading')
+    : i18n.t('photosCountFormat', { count: photos.length, max: PAGE_SIZE })}
+/>
 
-  {#if loadError}
-    <p class="mb-4 rounded border border-destructive bg-card px-3 py-2 text-sm text-destructive">
-      {loadError}
-    </p>
-  {/if}
+{#if loadError}
+  <div class="mb-4 rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+    {loadError}
+  </div>
+{/if}
 
-  {#if !isLoading && photos.length === 0 && !loadError}
-    <p class="text-sm opacity-55">{i18n.t('photosEmpty')}</p>
-  {/if}
-
-  <div
-    class="grid gap-3"
-    style="grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));"
-  >
-    {#each photos as photo (photo.id)}
-      <!-- card は button にできない (内部に「フォルダを開く」 button があるため
-           HTML 仕様で nested button 不可)。div + role="button" + keydown で代替。 -->
-      <div
-        role="button"
-        tabindex="0"
-        class="group flex cursor-pointer flex-col rounded-md border bg-card p-3 text-left transition hover:border-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-        onclick={() => handleOpen(photo)}
-        onkeydown={(ev) => onCardKey(photo, ev)}
-        title={i18n.t('photoOpenHint')}
-      >
-        <!-- サムネ表示。thumb_writer (Phase 6.3) が thumbPath を埋めたら asset:// に。
-             tauri.conf.json の assetProtocol.scope は thumbs/** だけ通している。 -->
-        <div class="mb-2 flex aspect-video items-center justify-center overflow-hidden rounded bg-muted text-xs opacity-50">
-          {#if photo.thumbPath}
-            <img
-              src={convertFileSrc(photo.thumbPath)}
-              alt={photo.fileName}
-              class="h-full w-full object-cover"
-              loading="lazy"
-            />
-          {:else}
-            {i18n.t('photoNoThumb')}
-          {/if}
-        </div>
-        <p class="truncate font-mono text-xs" title={photo.fileName}>{photo.fileName}</p>
-        <p class="mt-1 text-xs opacity-60">{photo.takenNaiveLocal}</p>
-        <div class="mt-2 flex items-center justify-between gap-2 text-xs">
-          {#if photo.worldVisitId}
-            <a
-              href="/history?visit={photo.worldVisitId}"
-              class="truncate rounded bg-muted px-1.5 py-0.5 text-muted-foreground hover:underline"
-              title={photo.worldName ?? `visit #${photo.worldVisitId}`}
-              onclick={(ev) => ev.stopPropagation()}
-            >
-              {photo.worldName ?? `visit #${photo.worldVisitId}`}
-            </a>
-          {:else}
-            <span class="opacity-40">{i18n.t('photoNoVisit')}</span>
-          {/if}
-          <button
-            type="button"
-            class="shrink-0 opacity-0 transition group-hover:opacity-100 hover:underline"
-            onclick={(ev) => handleOpenFolder(photo, ev)}
-            title={i18n.t('photoFolderBtn')}
-          >
-            {i18n.t('photoFolderBtn')}
-          </button>
-        </div>
+{#if isLoading}
+  <div class="grid gap-3" style="grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));">
+    {#each Array(12) as _, i (i)}
+      <div class="space-y-2">
+        <Skeleton class="aspect-video w-full" />
+        <Skeleton class="h-3 w-3/4" />
       </div>
     {/each}
   </div>
-</main>
+{:else if photos.length === 0 && !loadError}
+  <p class="text-sm text-muted-foreground">{i18n.t('photosEmpty')}</p>
+{:else}
+  <div class="space-y-6">
+    {#each grouped as group (group.day)}
+      <section>
+        <h2 class="sticky top-0 z-10 mb-3 -mx-1 bg-background/95 px-1 py-1 font-mono text-xs font-semibold uppercase tracking-wider text-muted-foreground backdrop-blur">
+          {formatDayLabel(group.day)}
+          <span class="ml-2 opacity-60">({group.items.length})</span>
+        </h2>
+        <div class="grid gap-3" style="grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));">
+          {#each group.items as photo (photo.id)}
+            <div
+              role="button"
+              tabindex="0"
+              class="group flex cursor-pointer flex-col overflow-hidden rounded-md border border-border bg-card transition-colors hover:border-primary/50 focus:outline-none focus:ring-2 focus:ring-ring"
+              onclick={() => handleOpen(photo)}
+              onkeydown={(ev) => onCardKey(photo, ev)}
+              title={i18n.t('photoOpenHint')}
+            >
+              <div class="flex aspect-video items-center justify-center overflow-hidden bg-muted text-[10px] text-muted-foreground">
+                {#if photo.thumbPath}
+                  <img
+                    src={convertFileSrc(photo.thumbPath)}
+                    alt={photo.fileName}
+                    class="h-full w-full object-cover"
+                    loading="lazy"
+                  />
+                {:else}
+                  {i18n.t('photoNoThumb')}
+                {/if}
+              </div>
+              <div class="flex items-center justify-between gap-1 px-2.5 py-2 text-[11px]">
+                {#if photo.worldVisitId}
+                  <a
+                    href="/history?visit={photo.worldVisitId}"
+                    class="flex min-w-0 items-center gap-1 truncate text-muted-foreground hover:text-foreground hover:underline"
+                    title={photo.worldName ?? `visit #${photo.worldVisitId}`}
+                    onclick={(ev) => ev.stopPropagation()}
+                  >
+                    <MapPin size={10} class="shrink-0" />
+                    <span class="truncate">{photo.worldName ?? `#${photo.worldVisitId}`}</span>
+                  </a>
+                {:else}
+                  <span class="text-muted-foreground/40">{i18n.t('photoNoVisit')}</span>
+                {/if}
+                <button
+                  type="button"
+                  class="shrink-0 rounded p-1 text-muted-foreground opacity-0 transition group-hover:opacity-100 hover:bg-muted hover:text-foreground"
+                  onclick={(ev) => handleOpenFolder(photo, ev)}
+                  title={i18n.t('photoFolderBtn')}
+                  aria-label={i18n.t('photoFolderBtn')}
+                >
+                  <FolderOpen size={12} />
+                </button>
+              </div>
+            </div>
+          {/each}
+        </div>
+      </section>
+    {/each}
+  </div>
+{/if}

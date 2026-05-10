@@ -1,8 +1,11 @@
 <script lang="ts">
   import { convertFileSrc } from '@tauri-apps/api/core';
   import { onMount } from 'svelte';
+  import { ExternalLink, MapPin, Video as VideoIcon } from 'lucide-svelte';
   import { listRecentVideos } from '$lib/api/commands';
   import { i18n } from '$lib/i18n/use_t.svelte';
+  import PageHeader from '$lib/ui/PageHeader.svelte';
+  import Skeleton from '$lib/ui/Skeleton.svelte';
   import type { Video } from '$lib/api/types';
 
   let videos = $state<Video[]>([]);
@@ -21,7 +24,6 @@
     return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
   }
 
-  // ホスト名を URL から取り出す表示用 (youtube.com / twitch.tv / nicovideo.jp 等)
   function hostOf(url: string): string {
     try {
       return new URL(url).hostname.replace(/^www\./, '');
@@ -47,47 +49,42 @@
   });
 </script>
 
-<main class="mx-auto min-h-screen max-w-3xl p-8">
-  <header class="mb-6 flex items-baseline justify-between">
-    <div>
-      <h1 class="text-2xl font-semibold">{i18n.t('videosTitle')}</h1>
-      <p class="mt-1 text-sm opacity-60">
-        {#if isLoading}
-          {i18n.t('loading')}
-        {:else}
-          {i18n.t('photosCountFormat', { count: videos.length, max: PAGE_SIZE })}
-        {/if}
-      </p>
-    </div>
-    <a href="/" class="text-sm text-muted-foreground hover:underline">{i18n.t('navHomeBack')}</a>
-  </header>
+<PageHeader
+  title={i18n.t('videosTitle')}
+  description={isLoading
+    ? i18n.t('loading')
+    : i18n.t('photosCountFormat', { count: videos.length, max: PAGE_SIZE })}
+/>
 
-  {#if loadError}
-    <p class="mb-4 rounded border border-destructive bg-card px-3 py-2 text-sm text-destructive">
-      {loadError}
-    </p>
-  {/if}
+{#if loadError}
+  <div class="mb-4 rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+    {loadError}
+  </div>
+{/if}
 
-  {#if !isLoading && videos.length === 0 && !loadError}
-    <p class="text-sm opacity-55">{i18n.t('videosEmpty')}</p>
-  {/if}
-
+{#if isLoading}
+  <div class="space-y-2">
+    {#each Array(8) as _, i (i)}
+      <Skeleton class="h-20 w-full" />
+    {/each}
+  </div>
+{:else if videos.length === 0 && !loadError}
+  <p class="text-sm text-muted-foreground">{i18n.t('videosEmpty')}</p>
+{:else}
   <ul class="space-y-2">
     {#each videos as video (video.id)}
       {@const thumbSrc = video.thumbnailPath ? convertFileSrc(video.thumbnailPath) : null}
-      <li class="flex gap-3 rounded-md border bg-card p-3">
+      <li class="flex gap-3 rounded-lg border border-border bg-card p-3 transition-colors hover:border-primary/40">
         {#if thumbSrc}
           <img
             src={thumbSrc}
             alt={video.title ?? ''}
-            class="h-16 w-28 shrink-0 rounded bg-muted object-cover"
+            class="h-16 w-28 shrink-0 rounded-md bg-muted object-cover"
             loading="lazy"
           />
         {:else}
-          <div
-            class="flex h-16 w-28 shrink-0 items-center justify-center rounded bg-muted text-[10px] opacity-50"
-          >
-            {video.title ? '...' : 'no thumb'}
+          <div class="flex h-16 w-28 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+            <VideoIcon size={20} />
           </div>
         {/if}
         <div class="min-w-0 flex-1">
@@ -95,7 +92,7 @@
             <span class="truncate text-sm font-medium" title={video.title ?? video.url}>
               {video.title ?? hostOf(video.url)}
             </span>
-            <span class="shrink-0 font-mono text-xs opacity-60">
+            <span class="shrink-0 font-mono text-xs text-muted-foreground">
               {formatTime(video.detectedUtc)}
             </span>
           </div>
@@ -103,21 +100,22 @@
             href={video.url}
             target="_blank"
             rel="noreferrer"
-            class="mt-1 block truncate font-mono text-xs text-muted-foreground hover:underline"
+            class="mt-1 flex items-center gap-1 truncate font-mono text-xs text-muted-foreground hover:text-foreground hover:underline"
             title={video.url}
           >
-            {video.url}
+            <ExternalLink size={10} class="shrink-0" />
+            <span class="truncate">{video.url}</span>
           </a>
           {#if video.worldVisitId}
             <a
               href="/history?visit={video.worldVisitId}"
-              class="mt-1 inline-block font-mono text-xs text-muted-foreground hover:underline"
+              class="mt-1 inline-flex items-center gap-1 font-mono text-xs text-muted-foreground hover:text-foreground hover:underline"
             >
-              visit #{video.worldVisitId}
+              <MapPin size={10} />visit #{video.worldVisitId}
             </a>
           {/if}
         </div>
       </li>
     {/each}
   </ul>
-</main>
+{/if}
