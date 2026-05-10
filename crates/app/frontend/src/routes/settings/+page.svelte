@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { open } from '@tauri-apps/plugin-dialog';
   import { onMount } from 'svelte';
   import { getSettings, saveSettings } from '$lib/api/commands';
   import type { Settings } from '$lib/api/types';
@@ -49,6 +50,30 @@
     }
   }
 
+  // tauri-plugin-dialog の `open({ directory: true })` でフォルダ選択ダイアログ。
+  // キャンセル時は null。複数選択は無効 (multiple: false)。
+  async function pickFolder(field: 'log_directory' | 'photo_directory' | 'thumbnail_cache_dir') {
+    if (!form) return;
+    try {
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        defaultPath: form[field] ?? undefined,
+        title:
+          field === 'log_directory'
+            ? 'VRChat ログディレクトリを選択'
+            : field === 'photo_directory'
+              ? 'VRChat 写真ディレクトリを選択'
+              : 'サムネキャッシュディレクトリを選択'
+      });
+      if (typeof selected === 'string' && selected.length > 0) {
+        form[field] = selected;
+      }
+    } catch (e) {
+      saveError = `フォルダ選択に失敗: ${e}`;
+    }
+  }
+
   function discard() {
     if (!original) return;
     form = JSON.parse(JSON.stringify(original)) as Settings;
@@ -88,16 +113,25 @@
           Log directory
           <span class="ml-1 text-xs opacity-55">(空なら VRChat 標準パスを自動検出)</span>
         </label>
-        <input
-          id="log_directory"
-          type="text"
-          class="w-full rounded border border-input bg-card px-3 py-2 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-          placeholder="C:\Users\You\AppData\LocalLow\VRChat\VRChat"
-          bind:value={
-            () => form!.log_directory ?? '',
-            (v: string) => (form!.log_directory = v.trim() === '' ? null : v)
-          }
-        />
+        <div class="flex gap-2">
+          <input
+            id="log_directory"
+            type="text"
+            class="flex-1 rounded border border-input bg-card px-3 py-2 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+            placeholder="C:\Users\You\AppData\LocalLow\VRChat\VRChat"
+            bind:value={
+              () => form!.log_directory ?? '',
+              (v: string) => (form!.log_directory = v.trim() === '' ? null : v)
+            }
+          />
+          <button
+            type="button"
+            class="shrink-0 rounded border border-input px-3 py-2 text-sm hover:bg-card"
+            onclick={() => pickFolder('log_directory')}
+          >
+            Browse…
+          </button>
+        </div>
       </div>
 
       <!-- photo_directory -->
@@ -106,16 +140,25 @@
           Photo directory
           <span class="ml-1 text-xs opacity-55">(必須: 設定するまで写真スキャンは動かない)</span>
         </label>
-        <input
-          id="photo_directory"
-          type="text"
-          class="w-full rounded border border-input bg-card px-3 py-2 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-          placeholder="C:\Users\You\Pictures\VRChat"
-          bind:value={
-            () => form!.photo_directory ?? '',
-            (v: string) => (form!.photo_directory = v.trim() === '' ? null : v)
-          }
-        />
+        <div class="flex gap-2">
+          <input
+            id="photo_directory"
+            type="text"
+            class="flex-1 rounded border border-input bg-card px-3 py-2 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+            placeholder="C:\Users\You\Pictures\VRChat"
+            bind:value={
+              () => form!.photo_directory ?? '',
+              (v: string) => (form!.photo_directory = v.trim() === '' ? null : v)
+            }
+          />
+          <button
+            type="button"
+            class="shrink-0 rounded border border-input px-3 py-2 text-sm hover:bg-card"
+            onclick={() => pickFolder('photo_directory')}
+          >
+            Browse…
+          </button>
+        </div>
       </div>
 
       <!-- locale -->
@@ -165,15 +208,24 @@
             Thumbnail cache directory
             <span class="ml-1 text-xs opacity-55">(空なら %LOCALAPPDATA% 下のデフォルト)</span>
           </label>
-          <input
-            id="thumbnail_cache_dir"
-            type="text"
-            class="w-full rounded border border-input bg-card px-3 py-2 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-            bind:value={
-              () => form!.thumbnail_cache_dir ?? '',
-              (v: string) => (form!.thumbnail_cache_dir = v.trim() === '' ? null : v)
-            }
-          />
+          <div class="flex gap-2">
+            <input
+              id="thumbnail_cache_dir"
+              type="text"
+              class="flex-1 rounded border border-input bg-card px-3 py-2 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              bind:value={
+                () => form!.thumbnail_cache_dir ?? '',
+                (v: string) => (form!.thumbnail_cache_dir = v.trim() === '' ? null : v)
+              }
+            />
+            <button
+              type="button"
+              class="shrink-0 rounded border border-input px-3 py-2 text-sm hover:bg-card"
+              onclick={() => pickFolder('thumbnail_cache_dir')}
+            >
+              Browse…
+            </button>
+          </div>
         </div>
       </details>
 

@@ -84,6 +84,9 @@ pub fn run() {
     let window_state = tauri_plugin_window_state::Builder::default().build();
     // Rust 側 `app.opener().open_path()` 専用。capability では opener:* perm を付けない。
     let opener = tauri_plugin_opener::init();
+    // dialog: Settings 画面の folder picker。capability で `dialog:allow-open` のみ
+    // 許可し、save dialog 等は使わせない (Phase 7.1.2 の用途は path 選択だけ)。
+    let dialog = tauri_plugin_dialog::init();
 
     // Builder.build() を経由することで、setup() の外でも AppHandle / AppState に
     // アクセスできる。これにより background task spawn を build() 後に行えて、
@@ -93,6 +96,7 @@ pub fn run() {
         .plugin(window_state)
         .plugin(autostart)
         .plugin(opener)
+        .plugin(dialog)
         .manage(bootstrap.state)
         .invoke_handler(tauri::generate_handler![
             commands::open_photo,

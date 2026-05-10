@@ -4,6 +4,7 @@
   "description": "Phase 5d: core のみ。opener:* perm は意図的に外している (plan §7) — JS から `plugin:opener|open_path` は呼ばせず、Rust 側 app.opener().open_path() を path traversal validation 後にだけ使うため。",
   "windows": ["main"],
   "permissions": [
-    "core:default"
+    "core:default",
+    "dialog:allow-open"
   ]
 }

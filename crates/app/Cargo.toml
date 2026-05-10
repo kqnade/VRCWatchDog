@@ -32,6 +32,10 @@ tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-single-instance = "2"
 tauri-plugin-window-state = "2"
 tauri-plugin-autostart = "2"
+# tauri-plugin-dialog: Settings 画面の folder picker (open dialog) で使う。
+# capabilities/default.json に dialog:allow-open を追加した上で、JS から
+# `@tauri-apps/plugin-dialog` の open() を呼び出す。
+tauri-plugin-dialog = "2"
 # tauri-plugin-opener は **Rust 側 `app.opener().open_path()` のために** だけ register
 # する。capabilities/default.json では opener:* perm を意図的に外しており、JS から
 # `invoke('plugin:opener|open_path', ...)` は呼べない (plan §7 を新 plugin で実装)。
