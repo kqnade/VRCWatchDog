@@ -15,6 +15,7 @@
 use std::path::PathBuf;
 
 use tauri::{AppHandle, State};
+use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_opener::OpenerExt;
 use vrcwatchdog_core::db::repo::{photo_records, world_visits};
 use vrcwatchdog_core::ipc::commands as core_cmd;
@@ -62,12 +63,39 @@ pub fn get_settings(state: State<'_, AppState>) -> Settings {
 ///
 /// 失敗時 (I/O エラー等) は文字列化して返す。
 #[tauri::command]
-pub async fn save_settings(settings: Settings, state: State<'_, AppState>) -> Result<(), String> {
+pub async fn save_settings(
+    settings: Settings,
+    state: State<'_, AppState>,
+    app: AppHandle,
+) -> Result<(), String> {
+    // autostart の値が変化したら HKCU\Run も同期させる。
+    // settings 永続化と plugin 反映の両方を 1 transaction にはできないが、settings 側を
+    // 先に書き込んで「真の値」とし、plugin 側失敗時は settings 保存済みのまま warn を
+    // 返す (= 次回 toggle 時に再試行できる)。plan §4 「明示操作のみ」の精神に沿う。
+    let prev_autostart = state.settings.snapshot().autostart_enabled;
+    let new_autostart = settings.autostart_enabled;
+
     state
         .settings
         .save(settings)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+
+    if prev_autostart != new_autostart {
+        let manager = app.autolaunch();
+        let result = if new_autostart {
+            manager.enable()
+        } else {
+            manager.disable()
+        };
+        if let Err(e) = result {
+            tracing::warn!(error = %e, new_autostart, "failed to sync autostart with HKCU\\Run");
+            return Err(format!("settings saved but autostart sync failed: {e}"));
+        }
+        tracing::info!(autostart = new_autostart, "autostart toggled via plugin");
+    }
+
+    Ok(())
 }
 
 /// 直近の写真を `taken_utc` 降順で最大 `limit` 件返す (photo_grid 用)。

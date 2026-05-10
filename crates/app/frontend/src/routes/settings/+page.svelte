@@ -192,7 +192,7 @@
         <label class="flex items-center gap-2 text-sm">
           <input type="checkbox" bind:checked={form.autostart_enabled} class="h-4 w-4" />
           OS 起動時に自動で開始する
-          <span class="text-xs opacity-55">(Phase 7.1.3 で実 plugin と同期)</span>
+          <span class="text-xs opacity-55">(保存時に HKCU\Run に反映)</span>
         </label>
         <label class="flex items-center gap-2 text-sm">
           <input type="checkbox" bind:checked={form.notification_enabled} class="h-4 w-4" />
