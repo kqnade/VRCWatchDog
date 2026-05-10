@@ -17,9 +17,13 @@ use std::path::PathBuf;
 use tauri::{AppHandle, State};
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_opener::OpenerExt;
-use vrcwatchdog_core::db::repo::{notification_records, photo_records, world_visits};
+use vrcwatchdog_core::db::repo::{
+    notification_records, photo_records, video_records, world_visits,
+};
 use vrcwatchdog_core::ipc::commands as core_cmd;
-use vrcwatchdog_core::ipc::commands::{InitialWarnings, NotificationDto, PhotoRecordDto, VisitDto};
+use vrcwatchdog_core::ipc::commands::{
+    InitialWarnings, NotificationDto, PhotoRecordDto, VideoDto, VisitDto,
+};
 use vrcwatchdog_core::ipc::events::{OneDriveWarning, SettingsCorruptWarning};
 use vrcwatchdog_core::settings::Settings;
 
@@ -140,6 +144,24 @@ pub async fn list_recent_visits(
         .map_err(|e| e.to_string())?;
     tx.commit().await.map_err(|e| format!("commit tx: {e}"))?;
     Ok(rows.into_iter().map(VisitDto::from).collect())
+}
+
+/// 直近の動画 URL を `detected_utc` 降順で最大 `limit` 件返す。/videos 画面用。
+#[tauri::command]
+pub async fn list_recent_videos(
+    limit: i64,
+    state: State<'_, AppState>,
+) -> Result<Vec<VideoDto>, String> {
+    let mut tx = state
+        .db_pool
+        .begin()
+        .await
+        .map_err(|e| format!("begin tx: {e}"))?;
+    let rows = video_records::list_recent(&mut tx, limit)
+        .await
+        .map_err(|e| e.to_string())?;
+    tx.commit().await.map_err(|e| format!("commit tx: {e}"))?;
+    Ok(rows.into_iter().map(VideoDto::from).collect())
 }
 
 /// 直近の通知を `received_utc` 降順で最大 `limit` 件返す。/notifications 画面用。

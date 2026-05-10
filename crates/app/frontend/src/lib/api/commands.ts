@@ -8,6 +8,7 @@ import type {
   Notification,
   PhotoRecord,
   Settings,
+  Video,
   Visit
 } from './types';
 
@@ -69,4 +70,9 @@ export function listRecentVisits(limit: number): Promise<Visit[]> {
 /** 直近 `limit` 件の通知を `receivedUtc` 降順で取得。 */
 export function listRecentNotifications(limit: number): Promise<Notification[]> {
   return invoke('list_recent_notifications', { limit });
+}
+
+/** 直近 `limit` 件の動画 URL を `detectedUtc` 降順で取得。 */
+export function listRecentVideos(limit: number): Promise<Video[]> {
+  return invoke('list_recent_videos', { limit });
 }

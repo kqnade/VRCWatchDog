@@ -26,6 +26,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::db::repo::notification_records::NotificationRecord;
 use crate::db::repo::photo_records::PhotoRecord;
+use crate::db::repo::video_records::VideoRecord;
 use crate::db::repo::world_visits::VisitWithCounts;
 use crate::ipc::events::{OneDriveWarning, SettingsCorruptWarning};
 use crate::photo::{validate_photo_path, PhotoAccessError, PhotoTarget};
@@ -83,6 +84,41 @@ impl From<PhotoRecord> for PhotoRecordDto {
     /// 通常は `PhotoRecordDto::from_record(record, Some(thumb_dir))` を使うべき。
     fn from(r: PhotoRecord) -> Self {
         Self::from_record(r, None)
+    }
+}
+
+/// `list_recent_videos` command の戻り値要素。/videos 画面用。
+///
+/// `title` / `thumbnail_url` / `thumbnail_sha` は Phase 7.3.3 の video_info service が
+/// 後で fetch して埋める前提。それまでは frontend が URL のみ表示する。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VideoDto {
+    pub id: i64,
+    pub url: String,
+    pub title: Option<String>,
+    pub thumbnail_url: Option<String>,
+    pub thumbnail_sha: Option<String>,
+    pub detected_naive_local: String,
+    pub detected_utc: DateTime<Utc>,
+    pub world_visit_id: Option<i64>,
+}
+
+impl From<VideoRecord> for VideoDto {
+    fn from(r: VideoRecord) -> Self {
+        Self {
+            id: r.id,
+            url: r.url,
+            title: r.title,
+            thumbnail_url: r.thumbnail_url,
+            thumbnail_sha: r.thumbnail_sha,
+            detected_naive_local: r
+                .detected_naive_local
+                .format("%Y-%m-%d %H:%M:%S")
+                .to_string(),
+            detected_utc: r.detected_utc,
+            world_visit_id: r.world_visit_id,
+        }
     }
 }
 

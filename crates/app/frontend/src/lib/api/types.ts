@@ -67,6 +67,20 @@ export interface PhotoRecord {
   worldVisitId: number | null;
 }
 
+// `list_recent_videos` の戻り値要素。
+// title / thumbnailUrl / thumbnailSha は将来の video_info service が oembed 等から
+// fetch して埋める予定 (現状は NULL)。
+export interface Video {
+  id: number;
+  url: string;
+  title: string | null;
+  thumbnailUrl: string | null;
+  thumbnailSha: string | null;
+  detectedNaiveLocal: string;
+  detectedUtc: string;
+  worldVisitId: number | null;
+}
+
 // `list_recent_notifications` の戻り値要素。/notifications 画面で表示する。
 export interface Notification {
   id: number;

@@ -110,6 +110,7 @@
     <a href="/photos" class="text-muted-foreground hover:underline">Photos →</a>
     <a href="/history" class="text-muted-foreground hover:underline">Activity History →</a>
     <a href="/notifications" class="text-muted-foreground hover:underline">Notifications →</a>
+    <a href="/videos" class="text-muted-foreground hover:underline">Videos →</a>
     <a href="/settings" class="text-muted-foreground hover:underline">Settings →</a>
   </nav>
 
