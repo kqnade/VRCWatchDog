@@ -14,9 +14,11 @@
 pub mod actor;
 pub mod filename;
 pub mod ingest;
+pub mod notify_source;
 pub mod visit_matcher;
 
 pub use actor::{HandleOutcome, PhotoScannerActor, PhotoScannerConfig, ReconcileOutcome};
 pub use filename::{parse_vrchat_filename, VRChatPhotoMeta};
 pub use ingest::{ingest_photo, load_world_visit_ranges, IngestOutcome, SkipReason};
+pub use notify_source::NotifyPhotoSource;
 pub use visit_matcher::{match_photo_to_visit, WorldVisitTimeRange};
