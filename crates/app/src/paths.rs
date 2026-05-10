@@ -88,6 +88,21 @@ impl AppPaths {
     const APP_DIR_NAME: &'static str = "VRCWatchDog";
 }
 
+/// VRChat の標準ログディレクトリ。`%USERPROFILE%\AppData\LocalLow\VRChat\VRChat`。
+///
+/// `settings.log_directory` が未設定の起動時に fallback として使う想定。
+/// `%USERPROFILE%` が無い環境 (= テスト環境を想定) では `None` を返す。
+/// **fs に触らない** ので、戻り値の path は存在しないこともある (呼び側で `is_dir()` 確認)。
+pub fn default_vrchat_log_dir() -> Option<PathBuf> {
+    env::var_os("USERPROFILE").map(|home| {
+        PathBuf::from(home)
+            .join("AppData")
+            .join("LocalLow")
+            .join("VRChat")
+            .join("VRChat")
+    })
+}
+
 /// DB が roaming/OneDrive 同期下にある可能性。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DbSyncRisk {
@@ -255,6 +270,25 @@ mod tests {
             .detect_db_sync_risk()
             .expect("must flag onedrive lowercase");
         assert_eq!(risk.indicator, "OneDrive");
+    }
+
+    #[test]
+    fn default_vrchat_log_dir_returns_localllow_path_under_userprofile() {
+        // CI も dev 機もどちらも USERPROFILE は設定済み前提 (Windows の標準環境変数)。
+        // Linux runner では USERPROFILE が無いので None になるが、それも仕様。
+        if env::var_os("USERPROFILE").is_none() {
+            // Linux など: None を返すこと
+            assert!(default_vrchat_log_dir().is_none());
+        } else {
+            let p = default_vrchat_log_dir().expect("USERPROFILE 設定済みなら Some");
+            let s = p.to_string_lossy();
+            // separator は OS によって \ or / で変わるので contains で寛容に比較。
+            let normalized = s.replace('\\', "/");
+            assert!(
+                normalized.ends_with("/AppData/LocalLow/VRChat/VRChat"),
+                "got {s}"
+            );
+        }
     }
 
     #[test]

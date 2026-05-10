@@ -15,13 +15,30 @@ pub mod commands;
 pub mod paths;
 pub mod state;
 
+use std::path::Path;
+use std::sync::Arc;
+use std::time::Duration;
+
 use tauri::{Emitter, Manager};
+use tokio::task::JoinSet;
 use tracing_subscriber::EnvFilter;
 use vrcwatchdog_core::ipc::events::{names, OneDriveWarning, SettingsCorruptWarning};
+use vrcwatchdog_core::log_watcher::{
+    LogWatcherActor, NotifyEventSource, RealFsProbe, WatcherConfig,
+};
+use vrcwatchdog_core::projector::project_batch;
 
 use crate::bootstrap::Bootstrap;
-use crate::paths::AppPaths;
+use crate::paths::{default_vrchat_log_dir, AppPaths};
 use crate::state::AppState;
+
+/// projector batch の最大処理件数 (1 イテレーション)。
+/// 値は plan §1 の backpressure 設計を踏まえつつ tail.rs と揃える。
+const PROJECTOR_BATCH_SIZE: i64 = 500;
+
+/// projector の poll 間隔。raw_log_events に push があってから projection されるまでの
+/// 最大遅延の目安。
+const PROJECTOR_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
 /// Tauri アプリを起動する。
 ///
@@ -45,6 +62,12 @@ pub fn run() {
         Ok(b) => b,
         Err(e) => fatal("bootstrap failed", e),
     };
+
+    // Step 7 (partial): log_watcher actor + projector loop を spawn。
+    // JoinSet をローカルに保持し、Tauri Builder.run() が抜けた直後に drop すること
+    // で全 task を abort する。state には積まないので、Bootstrap::new の同期テストは
+    // この spawn の影響を受けない。
+    let bg_tasks = tauri::async_runtime::block_on(spawn_background_tasks(&bootstrap.state));
 
     // Step 2: single-instance (最早登録)。2 番目に起動された process は plugin が
     // 起動済みインスタンスにシグナルを送り、自身は早期終了する。
@@ -114,6 +137,107 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("tauri runtime failed to start");
+
+    // Builder.run() から抜けたら (= app exit) 背景タスクを abort。
+    // JoinSet::drop が abort_all を呼ぶので明示は不要だが、意図を明示するためにも書く。
+    drop(bg_tasks);
+}
+
+/// log_watcher actor + projector loop を spawn して JoinSet として返す。
+///
+/// - log_watcher は `settings.log_directory` を最優先、未設定なら `default_vrchat_log_dir()`
+///   を fallback として使う。どちらの path も `is_dir()` が false なら spawn しない (warn log)。
+/// - projector loop は常時 spawn。raw_log_events が無くてもループは回り続け (no-op)、
+///   後から log_watcher が事象を流し込んだ時点で processing が始まる。
+async fn spawn_background_tasks(state: &AppState) -> JoinSet<()> {
+    let mut tasks = JoinSet::new();
+
+    // log_watcher: 有効な log_dir があれば spawn
+    let configured = state.settings.snapshot().log_directory.clone();
+    let effective_log_dir = configured.or_else(default_vrchat_log_dir);
+
+    match effective_log_dir.as_deref() {
+        Some(dir) if dir.is_dir() => {
+            spawn_log_watcher(&mut tasks, state.db_pool.clone(), dir).await;
+        }
+        Some(dir) => {
+            tracing::warn!(
+                log_dir = %dir.display(),
+                "log directory does not exist; log_watcher not started \
+                 (set settings.log_directory or install VRChat to populate the default path)",
+            );
+        }
+        None => {
+            tracing::warn!(
+                "no log directory configured and USERPROFILE missing; log_watcher not started",
+            );
+        }
+    }
+
+    // projector: 常時 spawn
+    let pool = state.db_pool.clone();
+    tasks.spawn(async move {
+        loop {
+            match project_batch(&pool, PROJECTOR_BATCH_SIZE).await {
+                Ok(r) if r.processed > 0 => {
+                    tracing::info!(
+                        processed = r.processed,
+                        done = r.done,
+                        skipped = r.skipped,
+                        failed = r.failed,
+                        "projector batch",
+                    );
+                }
+                Ok(_) => {}
+                Err(e) => tracing::error!(error = %e, "projector batch failed"),
+            }
+            tokio::time::sleep(PROJECTOR_POLL_INTERVAL).await;
+        }
+    });
+
+    tasks
+}
+
+/// `spawn_log_watcher` 内部分け。エラー時は warn log だけで吸収し、
+/// projector など他の background task の起動を阻害しない。
+async fn spawn_log_watcher(tasks: &mut JoinSet<()>, pool: sqlx::SqlitePool, log_dir: &Path) {
+    let probe = Arc::new(RealFsProbe::new());
+    let source = match NotifyEventSource::new(log_dir) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(
+                log_dir = %log_dir.display(),
+                error = %e,
+                "failed to initialize notify watcher; log_watcher not started",
+            );
+            return;
+        }
+    };
+    let mut actor = LogWatcherActor::new(pool, source, probe, WatcherConfig::default());
+
+    // 起動時 reconcile: 既存ファイルを catch-up。失敗時は warn だけして actor 起動は続行
+    // (notify が以後の変更を捕捉する余地は残る)。
+    let log_dir_for_log = log_dir.to_path_buf();
+    if let Err(e) = actor.reconcile(log_dir).await {
+        tracing::warn!(
+            log_dir = %log_dir.display(),
+            error = %e,
+            "initial reconcile failed; log_watcher will still start",
+        );
+    } else {
+        tracing::info!(log_dir = %log_dir.display(), "initial reconcile completed");
+    }
+
+    tasks.spawn(async move {
+        if let Err(e) = actor.run().await {
+            tracing::error!(
+                log_dir = %log_dir_for_log.display(),
+                error = %e,
+                "log_watcher actor exited with error",
+            );
+        }
+    });
+    tracing::info!(log_dir = %log_dir.display(), "log_watcher spawned");
 }
 
 fn init_tracing() {
