@@ -5,6 +5,7 @@
 //! 束ねる柔軟性と、テストで `tx.rollback()` で確実にクリーンに戻せる利点がある。
 
 pub mod notification_records;
+pub mod photo_records;
 pub mod player_sessions;
 pub mod processed_log_files;
 pub mod projected_raw_events;
