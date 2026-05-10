@@ -103,9 +103,12 @@
 
 <main class="mx-auto min-h-screen max-w-3xl p-8">
   <h1 class="mb-1 text-2xl font-semibold">VRCWatchDog</h1>
-  <p class="mb-6 text-sm opacity-60">
-    Phase 5g — Tailwind v4 + semantic theme tokens.
+  <p class="mb-2 text-sm opacity-60">
+    Phase 6 — log_watcher + projector + photo_scanner running.
   </p>
+  <nav class="mb-6 text-sm">
+    <a href="/photos" class="text-muted-foreground hover:underline">Photos →</a>
+  </nav>
 
   <section class="mb-4 rounded-md border bg-card p-4 {healthBorderClass}">
     <h2 class="mb-2 text-lg font-medium opacity-85">Health</h2>
