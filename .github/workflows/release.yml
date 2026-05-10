@@ -1,0 +1,81 @@
+name: Release
+
+# `v*` tag を push すると Windows runner で NSIS installer を作って GitHub Release に
+# 添付する。署名は未設定 (Phase 8 後半で EV cert / Azure Trusted Signing 検討)。
+#
+# 例: v0.1.0 を切るには
+#   git tag v0.1.0 && git push origin v0.1.0
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  SQLX_OFFLINE: 'true'
+
+permissions:
+  contents: write  # Release への asset upload に必要
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build NSIS installer (windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # release profile は CI 内 cache hit でも cold rebuild になりがちなので
+      # shared-key をリリース専用に固定。`save-if: true` で tag run でも保存する
+      # (= 次の release tag 時に少しでも温まっているように)。
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: app-windows-release
+          cache-on-failure: true
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: crates/app/frontend/pnpm-lock.yaml
+
+      - name: pnpm install (frontend)
+        run: pnpm install --frozen-lockfile
+        working-directory: crates/app/frontend
+
+      # tauri build は内部で beforeBuildCommand=`pnpm build` を呼んで frontend dist を
+      # 生成し、続けて Rust release build → tauri-bundler で NSIS をビルドする。
+      - name: cargo tauri build
+        run: pnpm tauri build
+        working-directory: crates/app/frontend
+
+      # tauri-bundler の出力先は `target/release/bundle/nsis/<name>_<version>_x64-setup.exe`。
+      # workspace root の target を見れば良い。
+      - name: list bundle output
+        shell: pwsh
+        run: |
+          Get-ChildItem -Path target/release/bundle -Recurse -File | ForEach-Object { $_.FullName }
+
+      # GitHub Release を作成 (既存なら append) して installer を添付する。
+      - name: upload installer to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            target/release/bundle/nsis/*-setup.exe
+            target/release/bundle/nsis/*.nsis.zip
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          draft: false
+          prerelease: ${{ contains(github.ref, '-') }}

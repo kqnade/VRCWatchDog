@@ -8,6 +8,7 @@ authors = ["kqnade"]
 license = "MIT"
 repository = "https://github.com/kqnade/VRCWatchDog"
 rust-version = "1.80"
+version = "0.1.0"
 
 [workspace.dependencies]
 async-trait = "0.1"
