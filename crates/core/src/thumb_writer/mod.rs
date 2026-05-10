@@ -11,6 +11,8 @@
 //! 6.3.2 では render (= 純粋に画像 1 件を webp に変換する関数) を landing。
 //! 6.3.3 で worker actor、6.3.4 で bootstrap wire。
 
+pub mod actor;
 pub mod render;
 
+pub use actor::{BatchOutcome, ThumbWriterActor, ThumbWriterConfig};
 pub use render::{render_thumb_to_webp, ThumbRenderError};
