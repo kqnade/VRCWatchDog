@@ -12,6 +12,7 @@ pub mod photo;
 pub mod photo_scanner;
 pub mod projector;
 pub mod settings;
+pub mod thumb_writer;
 pub mod time;
 
 pub use error::{Error, Result};
