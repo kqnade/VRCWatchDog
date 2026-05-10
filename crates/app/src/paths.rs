@@ -198,13 +198,18 @@ mod tests {
     }
 
     #[test]
-    fn ensure_dirs_is_idempotent() {
+    fn ensure_dirs_does_not_error_when_called_twice() {
         let r = tempdir().unwrap();
         let l = tempdir().unwrap();
         let p = make_paths(r.path(), l.path());
         p.ensure_dirs().unwrap();
-        // 2 回呼んでもエラーにならない
-        p.ensure_dirs().unwrap();
+
+        let second_call = p.ensure_dirs();
+
+        assert!(
+            second_call.is_ok(),
+            "ensure_dirs は冪等であるべき (create_dir_all は既存 dir に対して Ok を返す)"
+        );
     }
 
     #[test]
@@ -272,35 +277,84 @@ mod tests {
         assert_eq!(risk.indicator, "OneDrive");
     }
 
+    // default_vrchat_log_dir は OS 環境変数 USERPROFILE の有無で挙動が分岐する。
+    // 同一テスト内で if 分岐させると assertion の責務がぼやけ、CI のどちらの分岐が
+    // 通ったか log で分からなくなる。OS ごとに #[cfg] で別テストにする。
+
+    #[cfg(windows)]
     #[test]
-    fn default_vrchat_log_dir_returns_localllow_path_under_userprofile() {
-        // CI も dev 機もどちらも USERPROFILE は設定済み前提 (Windows の標準環境変数)。
-        // Linux runner では USERPROFILE が無いので None になるが、それも仕様。
-        if env::var_os("USERPROFILE").is_none() {
-            // Linux など: None を返すこと
-            assert!(default_vrchat_log_dir().is_none());
-        } else {
-            let p = default_vrchat_log_dir().expect("USERPROFILE 設定済みなら Some");
-            let s = p.to_string_lossy();
-            // separator は OS によって \ or / で変わるので contains で寛容に比較。
-            let normalized = s.replace('\\', "/");
-            assert!(
-                normalized.ends_with("/AppData/LocalLow/VRChat/VRChat"),
-                "got {s}"
-            );
+    fn default_vrchat_log_dir_resolves_to_localllow_vrchat_dir_on_windows() {
+        // Arrange: Windows では runner / dev 機を問わず USERPROFILE が必ず存在する。
+        assert!(
+            env::var_os("USERPROFILE").is_some(),
+            "前提条件違反: Windows なら USERPROFILE が無い環境では再現性が無いのでテスト不能"
+        );
+
+        // Act
+        let resolved = default_vrchat_log_dir();
+
+        // Assert
+        let path = resolved.expect("Windows + USERPROFILE 在りなら Some 必須");
+        let normalized = path.to_string_lossy().replace('\\', "/");
+        assert!(
+            normalized.ends_with("/AppData/LocalLow/VRChat/VRChat"),
+            "VRChat 標準パスで終わるべき: {}",
+            path.display()
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn default_vrchat_log_dir_returns_none_when_userprofile_absent() {
+        // POSIX 系では USERPROFILE が無いのが通常。`paths.rs` の規約として None を返す。
+        // (USERPROFILE を export している POSIX dev 機の存在は無視: 設計上 Windows-only target)。
+        if env::var_os("USERPROFILE").is_some() {
+            // 万が一 export されていたら skip。テストの責務外。
+            return;
         }
+
+        let resolved = default_vrchat_log_dir();
+
+        assert!(resolved.is_none());
+    }
+
+    // read_env_var の振る舞いは 3 つに分かれる: 未設定 / 空文字 / 値あり。
+    // 同一テスト内で env mutation を 3 回繰り返すと、どの assertion で落ちたかが
+    // 不明瞭になる + テスト失敗時の回復に手間取る。1 テスト 1 ケースに分割する。
+    //
+    // 全テストで衝突しないユニーク env 名を使い、関数末尾で必ず remove する
+    // (テスト間の独立性確保)。
+
+    #[test]
+    fn read_env_var_returns_none_when_env_var_is_unset() {
+        let name = "VRCWATCHDOG_TEST_READ_ENV_VAR_UNSET";
+        // 念のため事前 cleanup (前回ランで残ってた場合)
+        env::remove_var(name);
+
+        let got = read_env_var(name);
+
+        assert!(got.is_none());
     }
 
     #[test]
-    fn read_env_var_treats_empty_as_missing() {
-        // 単一スレッド前提で env を触る。他テストと衝突しないよう一意な name を使う。
-        // edition 2021 では env::set_var は safe。
-        let name = "VRCWATCHDOG_TEST_EMPTY_ENV_VAR";
+    fn read_env_var_returns_none_when_env_var_is_empty_string() {
+        let name = "VRCWATCHDOG_TEST_READ_ENV_VAR_EMPTY";
         env::set_var(name, "");
-        assert!(read_env_var(name).is_none());
+
+        let got = read_env_var(name);
+
+        assert!(got.is_none());
+        env::remove_var(name); // teardown
+    }
+
+    #[test]
+    fn read_env_var_returns_pathbuf_when_env_var_has_value() {
+        let name = "VRCWATCHDOG_TEST_READ_ENV_VAR_VALUE";
         env::set_var(name, "C:/x");
-        assert_eq!(read_env_var(name), Some(PathBuf::from("C:/x")));
-        env::remove_var(name);
-        assert!(read_env_var(name).is_none());
+
+        let got = read_env_var(name);
+
+        assert_eq!(got, Some(PathBuf::from("C:/x")));
+        env::remove_var(name); // teardown
     }
 }
