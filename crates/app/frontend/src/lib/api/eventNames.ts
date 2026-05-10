@@ -9,3 +9,4 @@ export const EVENT_ONEDRIVE_WARNING = 'vrcwatchdog://onedrive-warning';
 export const EVENT_FATAL_CORRUPTION = 'vrcwatchdog://fatal-corruption';
 export const EVENT_INGEST_PROGRESS = 'vrcwatchdog://ingest-progress';
 export const EVENT_UNKNOWN_LOG_FORMAT = 'vrcwatchdog://unknown-log-format';
+export const EVENT_LIVE_LOG_EVENT = 'vrcwatchdog://live-log-event';

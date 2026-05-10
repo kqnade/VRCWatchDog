@@ -12,6 +12,7 @@ import {
   EVENT_FATAL_CORRUPTION,
   EVENT_HEALTH_STATUS,
   EVENT_INGEST_PROGRESS,
+  EVENT_LIVE_LOG_EVENT,
   EVENT_ONEDRIVE_WARNING,
   EVENT_SETTINGS_CORRUPT,
   EVENT_UNKNOWN_LOG_FORMAT
@@ -20,6 +21,7 @@ import type {
   FatalCorruptionEvent,
   HealthStatus,
   IngestProgress,
+  LiveLogEvent,
   OneDriveWarning,
   SettingsCorruptWarning,
   UnknownLogFormatWarning
@@ -65,4 +67,15 @@ export function onUnknownLogFormat(
   return listen<UnknownLogFormatWarning>(EVENT_UNKNOWN_LOG_FORMAT, (e) =>
     handler(e.payload)
   );
+}
+
+/**
+ * projector が Done に projection した直後の LiveLogEvent (Phase B)。
+ * /realtime ページが ring buffer に積んでスクロール表示するために使う。
+ * 各 batch ごとに複数 event が飛ぶことがある (catch-up 時など 100+)。
+ */
+export function onLiveLogEvent(
+  handler: (payload: LiveLogEvent) => void
+): Promise<UnlistenFn> {
+  return listen<LiveLogEvent>(EVENT_LIVE_LOG_EVENT, (e) => handler(e.payload));
 }

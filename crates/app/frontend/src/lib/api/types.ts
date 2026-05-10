@@ -111,6 +111,36 @@ export interface Visit {
   duration: string;
 }
 
+// `vrcwatchdog://live-log-event` payload (Phase B)。
+// core::ipc::events::LiveLogEvent と shape を一致させる (`tag = "kind"`)。
+export type LiveLogEvent =
+  | { kind: 'worldEntering'; naiveLocal: string; worldName: string }
+  | {
+      kind: 'worldJoining';
+      naiveLocal: string;
+      worldId: string;
+      instanceId: string;
+    }
+  | {
+      kind: 'playerJoined';
+      naiveLocal: string;
+      displayName: string;
+      userId: string | null;
+    }
+  | {
+      kind: 'playerLeft';
+      naiveLocal: string;
+      displayName: string;
+      userId: string | null;
+    }
+  | {
+      kind: 'notification';
+      naiveLocal: string;
+      sender: string;
+      ntype: string;
+    }
+  | { kind: 'videoUrl'; naiveLocal: string; url: string };
+
 // `get_self_player` の戻り値。1 度も VRChat にログインしていなければ
 // displayName は null。
 export interface SelfPlayer {
