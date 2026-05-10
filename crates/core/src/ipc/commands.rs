@@ -47,11 +47,21 @@ pub struct PhotoRecordDto {
     pub taken_naive_local: String,
     pub taken_utc: DateTime<Utc>,
     pub thumb_sha: Option<String>,
+    /// thumb_sha が Some の場合のみ Some。`<thumb_dir>/<sha>.webp` の絶対パス。
+    /// frontend は `convertFileSrc(thumb_path)` で asset:// URL に変換して `<img>` に貼る。
+    /// thumb がまだ生成されていなければ None (UI 側で placeholder 表示)。
+    pub thumb_path: Option<PathBuf>,
     pub world_visit_id: Option<i64>,
 }
 
-impl From<PhotoRecord> for PhotoRecordDto {
-    fn from(r: PhotoRecord) -> Self {
+impl PhotoRecordDto {
+    /// `PhotoRecord` を DTO に変換する。`thumb_dir` を渡せば `thumb_sha` から
+    /// 絶対パス `thumb_path` を組み立てる。`thumb_dir = None` の場合は path も None。
+    pub fn from_record(r: PhotoRecord, thumb_dir: Option<&Path>) -> Self {
+        let thumb_path = match (r.thumb_sha.as_ref(), thumb_dir) {
+            (Some(sha), Some(dir)) => Some(dir.join(format!("{sha}.webp"))),
+            _ => None,
+        };
         Self {
             id: r.id,
             file_path: r.file_path,
@@ -59,8 +69,17 @@ impl From<PhotoRecord> for PhotoRecordDto {
             taken_naive_local: r.taken_naive_local.format("%Y-%m-%d %H:%M:%S").to_string(),
             taken_utc: r.taken_utc,
             thumb_sha: r.thumb_sha,
+            thumb_path,
             world_visit_id: r.world_visit_id,
         }
+    }
+}
+
+impl From<PhotoRecord> for PhotoRecordDto {
+    /// `thumb_dir` 不明での fallback。`thumb_path` は常に `None`。
+    /// 通常は `PhotoRecordDto::from_record(record, Some(thumb_dir))` を使うべき。
+    fn from(r: PhotoRecord) -> Self {
+        Self::from_record(r, None)
     }
 }
 
@@ -208,6 +227,7 @@ mod tests {
                     .expect("valid time"),
             ),
             thumb_sha: None,
+            thumb_path: None,
             world_visit_id: Some(7),
         };
 
@@ -219,7 +239,71 @@ mod tests {
         assert!(json.contains("\"takenNaiveLocal\":\"2026-05-10 12:34:56\""));
         assert!(json.contains("\"takenUtc\""));
         assert!(json.contains("\"thumbSha\":null"));
+        assert!(json.contains("\"thumbPath\":null"));
         assert!(json.contains("\"worldVisitId\":7"));
+    }
+
+    #[test]
+    fn photo_record_dto_from_record_builds_thumb_path_from_thumb_dir_and_sha() {
+        // Phase 6.3.4: thumb_sha + thumb_dir → 絶対パス組み立てロジック。
+        use crate::db::repo::photo_records::PhotoRecord;
+        use chrono::NaiveDate;
+        let record = PhotoRecord {
+            id: 1,
+            file_path: PathBuf::from("C:/photos/x.png"),
+            file_name: "x.png".into(),
+            taken_naive_local: NaiveDate::from_ymd_opt(2026, 5, 10)
+                .expect("valid date")
+                .and_hms_opt(12, 0, 0)
+                .expect("valid time"),
+            taken_utc: chrono::TimeZone::from_utc_datetime(
+                &chrono::Utc,
+                &NaiveDate::from_ymd_opt(2026, 5, 10)
+                    .expect("valid date")
+                    .and_hms_opt(3, 0, 0)
+                    .expect("valid time"),
+            ),
+            thumb_sha: Some("abc123".into()),
+            world_visit_id: None,
+        };
+
+        let dto = PhotoRecordDto::from_record(record, Some(Path::new("C:/cache/thumbs")));
+
+        assert_eq!(
+            dto.thumb_path,
+            Some(PathBuf::from("C:/cache/thumbs/abc123.webp"))
+        );
+    }
+
+    #[test]
+    fn photo_record_dto_from_record_returns_none_thumb_path_when_thumb_sha_missing() {
+        use crate::db::repo::photo_records::PhotoRecord;
+        use chrono::NaiveDate;
+        let record = PhotoRecord {
+            id: 1,
+            file_path: PathBuf::from("C:/photos/x.png"),
+            file_name: "x.png".into(),
+            taken_naive_local: NaiveDate::from_ymd_opt(2026, 5, 10)
+                .expect("valid date")
+                .and_hms_opt(12, 0, 0)
+                .expect("valid time"),
+            taken_utc: chrono::TimeZone::from_utc_datetime(
+                &chrono::Utc,
+                &NaiveDate::from_ymd_opt(2026, 5, 10)
+                    .expect("valid date")
+                    .and_hms_opt(3, 0, 0)
+                    .expect("valid time"),
+            ),
+            thumb_sha: None, // thumb_writer まだ走ってない
+            world_visit_id: None,
+        };
+
+        let dto = PhotoRecordDto::from_record(record, Some(Path::new("C:/cache/thumbs")));
+
+        assert!(
+            dto.thumb_path.is_none(),
+            "thumb_sha が None なら path も None"
+        );
     }
 
     #[test]

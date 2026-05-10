@@ -88,7 +88,11 @@ pub async fn list_recent_photos(
         .await
         .map_err(|e| e.to_string())?;
     tx.commit().await.map_err(|e| format!("commit tx: {e}"))?;
-    Ok(rows.into_iter().map(PhotoRecordDto::from).collect())
+    let thumb_dir = state.paths.thumb_dir.as_path();
+    Ok(rows
+        .into_iter()
+        .map(|r| PhotoRecordDto::from_record(r, Some(thumb_dir)))
+        .collect())
 }
 
 /// 起動時に Bootstrap が検出済みの警告 (settings corrupt / DB OneDrive sync) を返す。

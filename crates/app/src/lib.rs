@@ -31,6 +31,7 @@ use vrcwatchdog_core::log_watcher::{
 use vrcwatchdog_core::photo_scanner::{NotifyPhotoSource, PhotoScannerActor, PhotoScannerConfig};
 use vrcwatchdog_core::projector::project_batch;
 use vrcwatchdog_core::settings::Settings;
+use vrcwatchdog_core::thumb_writer::{ThumbWriterActor, ThumbWriterConfig};
 
 use crate::bootstrap::Bootstrap;
 use crate::paths::{default_vrchat_log_dir, AppPaths};
@@ -114,13 +115,14 @@ pub fn run() {
     // Step 7: log_watcher / projector / health emitter を background で spawn。
     // build() 後だと AppHandle が取れるので health emitter に渡せる。
     // State 借用を run() 前に解放するため、scope で必要な値だけ owned で取り出す。
-    let (handle, pool, settings_snapshot, db_path) = {
+    let (handle, pool, settings_snapshot, db_path, thumb_dir) = {
         let state: tauri::State<'_, AppState> = app.state();
         (
             app.handle().clone(),
             state.db_pool.clone(),
             state.settings.snapshot(),
             state.paths.db_path.clone(),
+            state.paths.thumb_dir.clone(),
         )
     };
     let bg_tasks = tauri::async_runtime::block_on(spawn_background_tasks(
@@ -128,6 +130,7 @@ pub fn run() {
         pool,
         settings_snapshot,
         db_path,
+        thumb_dir,
     ));
 
     // app.run() は self を消費して event loop 起動。Exit event で抜ける。
@@ -145,6 +148,7 @@ async fn spawn_background_tasks(
     pool: SqlitePool,
     settings_snapshot: Settings,
     db_path: PathBuf,
+    thumb_dir: PathBuf,
 ) -> JoinSet<()> {
     let mut tasks = JoinSet::new();
 
@@ -186,6 +190,11 @@ async fn spawn_background_tasks(
             );
         }
     }
+
+    // thumb_writer: photo_records から thumb_sha NULL の行を拾って webp を生成する。
+    // photo_directory に依存しない (DB の中身だけ見る) ので無条件 spawn。
+    // 既存写真がスキャン済みでも、thumb 未生成なら拾い続ける。
+    spawn_thumb_writer(&mut tasks, pool.clone(), thumb_dir);
 
     // projector: 常時 spawn。raw が無くても loop は回り続け (no-op)、
     // 後から log_watcher が事象を流し込んだ時点で processing が始まる。
@@ -231,6 +240,23 @@ async fn spawn_background_tasks(
     });
 
     tasks
+}
+
+/// thumb_writer worker を spawn する。photo_directory 設定に依存せず常に走る。
+/// photo_records の row は photo_scanner が入れるので、scanner が止まっていれば
+/// thumb_writer も自然と空 batch loop になる (poll_interval 待機)。
+fn spawn_thumb_writer(tasks: &mut JoinSet<()>, pool: SqlitePool, thumb_dir: PathBuf) {
+    let config = ThumbWriterConfig {
+        thumb_dir: thumb_dir.clone(),
+        ..ThumbWriterConfig::default()
+    };
+    let actor = ThumbWriterActor::new(pool, config);
+    tasks.spawn(async move {
+        if let Err(e) = actor.run().await {
+            tracing::error!(error = %e, "thumb_writer actor exited with error");
+        }
+    });
+    tracing::info!(thumb_dir = %thumb_dir.display(), "thumb_writer spawned");
 }
 
 /// OS から local timezone を取得して `chrono_tz::Tz` に変換する。

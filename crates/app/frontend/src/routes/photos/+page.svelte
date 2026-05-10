@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { convertFileSrc } from '@tauri-apps/api/core';
   import { onMount } from 'svelte';
   import { listRecentPhotos, openPhoto, openPhotoFolder } from '$lib/api/commands';
   import type { PhotoRecord } from '$lib/api/types';
@@ -101,12 +102,16 @@
         onkeydown={(ev) => onCardKey(photo, ev)}
         title="クリック / Enter で開く"
       >
-        <!-- サムネプレースホルダ (Phase 6.3 で thumbSha 由来 asset:// URL に差し替え) -->
-        <div
-          class="mb-2 flex aspect-video items-center justify-center rounded bg-muted text-xs opacity-50"
-        >
-          {#if photo.thumbSha}
-            (thumb: {photo.thumbSha.slice(0, 8)})
+        <!-- サムネ表示。thumb_writer (Phase 6.3) が thumbPath を埋めたら asset:// に。
+             tauri.conf.json の assetProtocol.scope は thumbs/** だけ通している。 -->
+        <div class="mb-2 flex aspect-video items-center justify-center overflow-hidden rounded bg-muted text-xs opacity-50">
+          {#if photo.thumbPath}
+            <img
+              src={convertFileSrc(photo.thumbPath)}
+              alt={photo.fileName}
+              class="h-full w-full object-cover"
+              loading="lazy"
+            />
           {:else}
             no thumb yet
           {/if}

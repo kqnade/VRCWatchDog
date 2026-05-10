@@ -61,6 +61,9 @@ export interface PhotoRecord {
   /** ISO 8601 UTC string. */
   takenUtc: string;
   thumbSha: string | null;
+  /** thumb_writer 完了後にのみ Some。`<thumb_dir>/<sha>.webp` の絶対パス。
+   * convertFileSrc() で asset:// URL に変換して `<img>` に貼る。 */
+  thumbPath: string | null;
   worldVisitId: number | null;
 }
 
