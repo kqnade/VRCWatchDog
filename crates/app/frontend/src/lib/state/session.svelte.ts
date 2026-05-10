@@ -15,6 +15,10 @@ import type {
  *  ページ mount で re-seed されるので、永続化するのはこの ring buffer だけ)。 */
 export const REALTIME_LOG_MAX = 100;
 
+/** session の event log 1 件。`seq` を {#each} の key に使うことで prepend ごとの
+ *  全行 re-mount を避ける (位置 index を key に混ぜると毎 push で全 key が変わる)。 */
+export type RealtimeLogEntry = { seq: number; event: LiveLogEvent };
+
 class Session {
   health: HealthStatus | null = $state(null);
   settingsCorrupt: SettingsCorruptWarning | null = $state(null);
@@ -23,15 +27,19 @@ class Session {
   thumbProgress: ThumbProgress | null = $state(null);
 
   /** /realtime のログ表示用 ring buffer。layout listener が push、ページが view。 */
-  realtimeEventLog: LiveLogEvent[] = $state([]);
-  /** /realtime の pause toggle。pause 中は layout listener が log buffer に追記しない。
-   *  currentWorld / presence は pause に関係なく更新したいので、こちらは page 側で
-   *  別 listener が常時受け取る。 */
+  realtimeEventLog: RealtimeLogEntry[] = $state([]);
+  /** /realtime の pause toggle。pause 中は layout listener が log buffer に追記しない。 */
   realtimePaused = $state(false);
+
+  #seq = 0;
 
   pushRealtimeLog(ev: LiveLogEvent): void {
     if (this.realtimePaused) return;
-    this.realtimeEventLog = [ev, ...this.realtimeEventLog].slice(0, REALTIME_LOG_MAX);
+    this.#seq += 1;
+    this.realtimeEventLog = [
+      { seq: this.#seq, event: ev },
+      ...this.realtimeEventLog,
+    ].slice(0, REALTIME_LOG_MAX);
   }
 
   clearRealtimeLog(): void {

@@ -180,11 +180,11 @@
     <p class="py-6 text-center text-sm text-muted-foreground">{i18n.t('realtimeWaiting')}</p>
   {:else}
     <ul class="-mx-5 -my-4 max-h-[60vh] divide-y divide-border overflow-y-auto">
-      {#each session.realtimeEventLog as ev, i (i + ev.naiveLocal + ev.kind)}
+      {#each session.realtimeEventLog as entry (entry.seq)}
         <li class="flex items-center gap-3 px-5 py-1.5 text-xs">
-          <span class="shrink-0 font-mono text-[10px] text-muted-foreground">{ev.naiveLocal}</span>
-          <Badge variant={badgeVariant(ev.kind)}>{ev.kind}</Badge>
-          <span class="truncate">{describe(ev)}</span>
+          <span class="shrink-0 font-mono text-[10px] text-muted-foreground">{entry.event.naiveLocal}</span>
+          <Badge variant={badgeVariant(entry.event.kind)}>{entry.event.kind}</Badge>
+          <span class="truncate">{describe(entry.event)}</span>
         </li>
       {/each}
     </ul>
