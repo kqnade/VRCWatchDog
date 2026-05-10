@@ -83,10 +83,15 @@ const HEALTH_EMIT_INTERVAL: Duration = Duration::from_secs(2);
 ///
 /// 失敗時は OS 例外コードと共に process exit する。
 pub fn run() {
-    init_tracing();
+    // Step 1: paths を先に解決して、log file 出力先を決める。
+    // release build は `windows_subsystem = "windows"` で stderr が detach されるため、
+    // ファイルに出さないと crash 原因が追えない。paths 解決すら失敗するケースは稀
+    // (LOCALAPPDATA が無い OS) なので、その場合のみ stderr fallback。
+    let paths_result = AppPaths::from_env();
+    init_tracing(paths_result.as_ref().ok());
+    install_panic_hook();
 
-    // Step 3-6: settings load + DB open + SettingsWriter spawn (sync portion of bootstrap)
-    let paths = match AppPaths::from_env() {
+    let paths = match paths_result {
         Ok(p) => p,
         Err(e) => fatal("could not resolve app paths", e),
     };
@@ -180,13 +185,11 @@ pub fn run() {
             let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
 
-            let _tray = TrayIconBuilder::with_id("main")
+            // tray icon: default_window_icon が None (= bundle.icon が PNG を含まない
+            // など) の場合、release build の setup を fail させずに **tray icon 無しで
+            // 続行** する。tray は無くてもアプリ自体は使えるようにする方が UX として安全。
+            let mut tray_builder = TrayIconBuilder::with_id("main")
                 .tooltip("VRCWatchDog")
-                .icon(
-                    app.default_window_icon()
-                        .cloned()
-                        .ok_or_else(|| tauri::Error::AssetNotFound("default window icon".into()))?,
-                )
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
@@ -203,8 +206,17 @@ pub fn run() {
                     {
                         toggle_main_window_visibility(tray.app_handle());
                     }
-                })
-                .build(app)?;
+                });
+            if let Some(icon) = app.default_window_icon().cloned() {
+                tray_builder = tray_builder.icon(icon);
+            } else {
+                tracing::warn!(
+                    "default_window_icon is None; tray icon will use OS-provided fallback"
+                );
+            }
+            if let Err(e) = tray_builder.build(app) {
+                tracing::error!(error = %e, "failed to build tray icon; continuing without tray");
+            }
 
             // close ボタンで quit せず hide-to-tray する
             if let Some(window) = app.get_webview_window("main") {
@@ -568,12 +580,59 @@ async fn spawn_log_watcher(tasks: &mut JoinSet<()>, pool: SqlitePool, log_dir: &
     tracing::info!(log_dir = %log_dir.display(), "log_watcher spawned");
 }
 
-fn init_tracing() {
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
-        .try_init();
+/// tracing を初期化する。`paths` が取れていれば
+/// `<local_dir>/logs/vrcwatchdog.log` に追記する file writer を併用する
+/// (release build は windows subsystem 設定で stderr が消えるため必須)。
+/// paths が無い場合は stderr のみ。
+fn init_tracing(paths: Option<&AppPaths>) {
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+
+    if let Some(paths) = paths {
+        let log_dir = paths.local_dir.join("logs");
+        if std::fs::create_dir_all(&log_dir).is_ok() {
+            let log_path = log_dir.join("vrcwatchdog.log");
+            // 起動毎に append。サイズ管理は今は省略 (1 起動あたり数 MB が上限想定)。
+            if let Ok(file) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log_path)
+            {
+                let _ = tracing_subscriber::fmt()
+                    .with_env_filter(filter)
+                    .with_writer(std::sync::Mutex::new(file))
+                    .with_ansi(false)
+                    .try_init();
+                return;
+            }
+        }
+    }
+
+    let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
+}
+
+/// panic を tracing::error として記録してから unwind に渡す。
+/// release build で stderr が消えていても、init_tracing が file writer を貼って
+/// いれば panic backtrace が `vrcwatchdog.log` に残る。
+fn install_panic_hook() {
+    let original = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let location = info
+            .location()
+            .map(|l| format!("{}:{}", l.file(), l.line()))
+            .unwrap_or_else(|| "<unknown>".to_string());
+        let payload = info
+            .payload()
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| {
+                info.payload()
+                    .downcast_ref::<String>()
+                    .map(ToString::to_string)
+            })
+            .unwrap_or_else(|| "<non-string panic>".to_string());
+        tracing::error!(location = %location, payload = %payload, "panic");
+        original(info);
+    }));
 }
 
 fn fatal(prefix: &str, e: impl std::fmt::Display) -> ! {
