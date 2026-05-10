@@ -11,10 +11,12 @@
 //! - WorldVisitMatcher は world_visits を joined_utc で sort 済み配列にして binary search
 //! - 写真原本の path 保護は plan §7 (asset:// で公開しない、open_photo command 経由のみ)
 
+pub mod actor;
 pub mod filename;
 pub mod ingest;
 pub mod visit_matcher;
 
+pub use actor::{HandleOutcome, PhotoScannerActor, PhotoScannerConfig, ReconcileOutcome};
 pub use filename::{parse_vrchat_filename, VRChatPhotoMeta};
 pub use ingest::{ingest_photo, load_world_visit_ranges, IngestOutcome, SkipReason};
 pub use visit_matcher::{match_photo_to_visit, WorldVisitTimeRange};
