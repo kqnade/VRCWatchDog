@@ -29,9 +29,16 @@ tauri-build = { version = "2", features = [] }
 # tauri.conf.json の assetProtocol.enable=true (plan §7) に対応する feature flag。
 # tauri-build はこの feature と conf の allowlist 一致を強制する。
 tauri = { version = "2", features = ["protocol-asset"] }
+tauri-plugin-single-instance = "2"
+tauri-plugin-window-state = "2"
+tauri-plugin-autostart = "2"
+vrcwatchdog-core = { path = "../core" }
+tokio.workspace = true
+sqlx.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 

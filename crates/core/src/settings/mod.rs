@@ -13,5 +13,5 @@
 pub mod store;
 pub mod writer;
 
-pub use store::{LoadOutcome, Settings, SettingsLoadError};
+pub use store::{load_settings, save_settings_atomic, LoadOutcome, Settings, SettingsLoadError};
 pub use writer::{SettingsCommand, SettingsHandle, SettingsWriter};
