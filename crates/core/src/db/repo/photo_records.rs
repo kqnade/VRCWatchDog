@@ -666,7 +666,11 @@ mod tests {
         let mut tx = pool.begin().await.unwrap();
         let _attached = insert(
             &mut tx,
-            &input_attached(Path::new("C:/p/in.png"), utc(2026, 5, 10, 12, 30, 0), visit_id),
+            &input_attached(
+                Path::new("C:/p/in.png"),
+                utc(2026, 5, 10, 12, 30, 0),
+                visit_id,
+            ),
         )
         .await
         .unwrap();
@@ -747,7 +751,11 @@ mod tests {
         let mut tx = pool.begin().await.unwrap();
         insert(
             &mut tx,
-            &input_attached(Path::new("C:/p/x.png"), utc(2026, 5, 10, 12, 30, 0), visit_id),
+            &input_attached(
+                Path::new("C:/p/x.png"),
+                utc(2026, 5, 10, 12, 30, 0),
+                visit_id,
+            ),
         )
         .await
         .unwrap();

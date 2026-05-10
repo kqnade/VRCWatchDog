@@ -246,7 +246,9 @@ pub async fn get_self_player(state: State<'_, AppState>) -> Result<SelfPlayerDto
         .await
         .map_err(|e| e.to_string())?;
     tx.commit().await.map_err(|e| format!("commit tx: {e}"))?;
-    Ok(row.map(SelfPlayerDto::from).unwrap_or_else(SelfPlayerDto::empty))
+    Ok(row
+        .map(SelfPlayerDto::from)
+        .unwrap_or_else(SelfPlayerDto::empty))
 }
 
 /// 起動時に Bootstrap が検出済みの警告 (settings corrupt / DB OneDrive sync) を返す。

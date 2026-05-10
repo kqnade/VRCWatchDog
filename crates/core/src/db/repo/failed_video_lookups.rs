@@ -22,12 +22,11 @@ pub async fn is_active(
     key_sha: &str,
     now: DateTime<Utc>,
 ) -> Result<bool> {
-    let row: Option<(String,)> = sqlx::query_as(
-        "SELECT expires_at FROM failed_video_lookups WHERE normalized_key_sha = ?1",
-    )
-    .bind(key_sha)
-    .fetch_optional(&mut **tx)
-    .await?;
+    let row: Option<(String,)> =
+        sqlx::query_as("SELECT expires_at FROM failed_video_lookups WHERE normalized_key_sha = ?1")
+            .bind(key_sha)
+            .fetch_optional(&mut **tx)
+            .await?;
     let Some((expires_at_str,)) = row else {
         return Ok(false);
     };
@@ -100,7 +99,9 @@ mod tests {
         let (pool, _dir) = fresh_pool().await;
         let mut tx = pool.begin().await.unwrap();
 
-        let active = is_active(&mut tx, "nonexistent", now_fixed()).await.unwrap();
+        let active = is_active(&mut tx, "nonexistent", now_fixed())
+            .await
+            .unwrap();
 
         assert!(!active);
     }

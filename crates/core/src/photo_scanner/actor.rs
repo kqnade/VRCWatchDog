@@ -437,10 +437,7 @@ mod tests {
         let outcome = actor.reconcile(photo_dir.path()).await.unwrap();
 
         // Assert: 隠し dir 配下は無視
-        assert_eq!(
-            outcome.considered, 0,
-            "隠しディレクトリ配下は scan 対象外"
-        );
+        assert_eq!(outcome.considered, 0, "隠しディレクトリ配下は scan 対象外");
         assert_eq!(count_photos(&pool).await, 0);
     }
 

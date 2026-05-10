@@ -971,9 +971,16 @@ mod tests {
         )
         .await
         .unwrap();
-        let _v2 = insert_pending(&mut tx, raw2, "Empty", nd(2026, 5, 9, 13, 0, 0), ctx(), None)
-            .await
-            .unwrap();
+        let _v2 = insert_pending(
+            &mut tx,
+            raw2,
+            "Empty",
+            nd(2026, 5, 9, 13, 0, 0),
+            ctx(),
+            None,
+        )
+        .await
+        .unwrap();
         tx.commit().await.unwrap();
         attach_n_players(&pool, v1, 3).await;
 

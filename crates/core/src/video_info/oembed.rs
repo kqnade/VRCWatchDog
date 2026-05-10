@@ -66,10 +66,7 @@ struct NoembedResponse {
 /// - `Ok(None)` : noembed は応答したが結果が空 (provider non-supported)。negative cache 候補。
 /// - `Err(_)` : ネットワーク / decode エラー。caller は retry を判断する。
 pub async fn fetch_oembed(client: &OembedClient, url: &str) -> Result<Option<OembedInfo>> {
-    let endpoint = format!(
-        "https://noembed.com/embed?url={}",
-        urlencoded::encode(url)
-    );
+    let endpoint = format!("https://noembed.com/embed?url={}", urlencoded::encode(url));
     let resp = client
         .inner
         .get(&endpoint)
@@ -130,8 +127,7 @@ mod tests {
     fn urlencoded_encodes_special_characters_as_percent_hex() {
         let got = urlencoded::encode("https://example.com/v?a=1&b=2");
         assert_eq!(
-            got,
-            "https%3A%2F%2Fexample.com%2Fv%3Fa%3D1%26b%3D2",
+            got, "https%3A%2F%2Fexample.com%2Fv%3Fa%3D1%26b%3D2",
             "scheme/colon/slash/?/=/& は全部 %XX 化"
         );
     }

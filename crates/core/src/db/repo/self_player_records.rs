@@ -125,11 +125,7 @@ mod tests {
     }
 
     /// FK 用の processed_log_file + raw_log_event を 1 件 seed して raw_id を返す。
-    async fn seed_raw(
-        pool: &sqlx::SqlitePool,
-        offset: i64,
-        display_name: &str,
-    ) -> i64 {
+    async fn seed_raw(pool: &sqlx::SqlitePool, offset: i64, display_name: &str) -> i64 {
         let mut tx = pool.begin().await.unwrap();
         let pf_id = processed_log_files::upsert(
             &mut tx,

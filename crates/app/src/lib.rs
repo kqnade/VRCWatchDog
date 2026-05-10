@@ -38,7 +38,6 @@ use vrcwatchdog_core::photo_scanner::{NotifyPhotoSource, PhotoScannerActor, Phot
 use vrcwatchdog_core::process_monitor::{
     ProcessTransition, VRChatProcessMonitor, VRChatProcessMonitorConfig,
 };
-use vrcwatchdog_core::ipc::events::names as event_names;
 use vrcwatchdog_core::projector::project_batch;
 use vrcwatchdog_core::settings::Settings;
 use vrcwatchdog_core::thumb_writer::{ThumbWriterActor, ThumbWriterConfig};
@@ -181,9 +180,11 @@ pub fn run() {
 
             let _tray = TrayIconBuilder::with_id("main")
                 .tooltip("VRCWatchDog")
-                .icon(app.default_window_icon().cloned().ok_or_else(|| {
-                    tauri::Error::AssetNotFound("default window icon".into())
-                })?)
+                .icon(
+                    app.default_window_icon()
+                        .cloned()
+                        .ok_or_else(|| tauri::Error::AssetNotFound("default window icon".into()))?,
+                )
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
@@ -375,7 +376,7 @@ async fn spawn_background_tasks(
                     // 分は /history などで読み返せるので realtime 視点では問題なし。
                     use tauri::Emitter;
                     for ev in r.events {
-                        if let Err(e) = app_for_proj.emit(event_names::LIVE_LOG_EVENT, &ev) {
+                        if let Err(e) = app_for_proj.emit(names::LIVE_LOG_EVENT, &ev) {
                             tracing::warn!(error = %e, "live_log_event emit failed");
                         }
                     }
