@@ -67,6 +67,21 @@ export interface PhotoRecord {
   worldVisitId: number | null;
 }
 
+// `list_recent_visits` の戻り値要素。activity_history 画面で表示する。
+//
+// duration は backend で format_duration_hms に通した "HH:MM:SS" 文字列、
+// あるいは ongoing visit (left_utc=null) なら "ongoing" マーカー。
+export interface Visit {
+  id: number;
+  worldId: string | null;
+  worldName: string;
+  joinedUtc: string;
+  leftUtc: string | null;
+  resolutionState: string;
+  photoCount: number;
+  duration: string;
+}
+
 // Settings は core::settings::store::Settings と一致させる (snake_case)。
 export interface Settings {
   log_directory: string | null;

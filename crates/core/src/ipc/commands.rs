@@ -25,9 +25,11 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::db::repo::photo_records::PhotoRecord;
+use crate::db::repo::world_visits::VisitWithCounts;
 use crate::ipc::events::{OneDriveWarning, SettingsCorruptWarning};
 use crate::photo::{validate_photo_path, PhotoAccessError, PhotoTarget};
 use crate::settings::Settings;
+use crate::time::format_duration_hms;
 
 /// `list_recent_photos` command の戻り値要素。
 ///
@@ -80,6 +82,44 @@ impl From<PhotoRecord> for PhotoRecordDto {
     /// 通常は `PhotoRecordDto::from_record(record, Some(thumb_dir))` を使うべき。
     fn from(r: PhotoRecord) -> Self {
         Self::from_record(r, None)
+    }
+}
+
+/// `list_recent_visits` command の戻り値要素。activity_history 画面用。
+///
+/// `duration` は `format_duration_hms` の出力 (`HH:MM:SS`、24h+ 対応)。
+/// `left_utc` が `None` (= まだ離室していない) の場合、`duration` は `"ongoing"` という
+/// マーカー文字列を返す (frontend がアイコン表示等に使う)。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VisitDto {
+    pub id: i64,
+    pub world_id: Option<String>,
+    pub world_name: String,
+    pub joined_utc: DateTime<Utc>,
+    pub left_utc: Option<DateTime<Utc>>,
+    pub resolution_state: String,
+    pub photo_count: i64,
+    /// `HH:MM:SS` または `"ongoing"`。
+    pub duration: String,
+}
+
+impl From<VisitWithCounts> for VisitDto {
+    fn from(v: VisitWithCounts) -> Self {
+        let duration = match v.left_utc {
+            Some(left) => format_duration_hms(left - v.joined_utc),
+            None => "ongoing".to_string(),
+        };
+        Self {
+            id: v.id,
+            world_id: v.world_id,
+            world_name: v.world_name,
+            joined_utc: v.joined_utc,
+            left_utc: v.left_utc,
+            resolution_state: v.resolution_state,
+            photo_count: v.photo_count,
+            duration,
+        }
     }
 }
 

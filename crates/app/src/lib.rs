@@ -101,6 +101,7 @@ pub fn run() {
             commands::save_settings,
             commands::get_initial_warnings,
             commands::list_recent_photos,
+            commands::list_recent_visits,
         ])
         .setup(|_app| {
             // 起動時警告は `get_initial_warnings` command で frontend が pull する

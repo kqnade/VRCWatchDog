@@ -3,7 +3,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 
-import type { InitialWarnings, PhotoRecord, Settings } from './types';
+import type { InitialWarnings, PhotoRecord, Settings, Visit } from './types';
 
 /**
  * 写真原本を OS の関連付けされたアプリケーションで開く。
@@ -53,4 +53,9 @@ export function getInitialWarnings(): Promise<InitialWarnings> {
  */
 export function listRecentPhotos(limit: number): Promise<PhotoRecord[]> {
   return invoke('list_recent_photos', { limit });
+}
+
+/** 直近 `limit` 件の visit を `joinedUtc` 降順 + 紐づく写真数付きで取得。 */
+export function listRecentVisits(limit: number): Promise<Visit[]> {
+  return invoke('list_recent_visits', { limit });
 }

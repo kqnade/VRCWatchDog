@@ -16,9 +16,9 @@ use std::path::PathBuf;
 
 use tauri::{AppHandle, State};
 use tauri_plugin_opener::OpenerExt;
-use vrcwatchdog_core::db::repo::photo_records;
+use vrcwatchdog_core::db::repo::{photo_records, world_visits};
 use vrcwatchdog_core::ipc::commands as core_cmd;
-use vrcwatchdog_core::ipc::commands::{InitialWarnings, PhotoRecordDto};
+use vrcwatchdog_core::ipc::commands::{InitialWarnings, PhotoRecordDto, VisitDto};
 use vrcwatchdog_core::ipc::events::{OneDriveWarning, SettingsCorruptWarning};
 use vrcwatchdog_core::settings::Settings;
 
@@ -93,6 +93,25 @@ pub async fn list_recent_photos(
         .into_iter()
         .map(|r| PhotoRecordDto::from_record(r, Some(thumb_dir)))
         .collect())
+}
+
+/// 直近の visit を `joined_utc` 降順で最大 `limit` 件、photo_count 付きで返す。
+/// activity_history 画面用。
+#[tauri::command]
+pub async fn list_recent_visits(
+    limit: i64,
+    state: State<'_, AppState>,
+) -> Result<Vec<VisitDto>, String> {
+    let mut tx = state
+        .db_pool
+        .begin()
+        .await
+        .map_err(|e| format!("begin tx: {e}"))?;
+    let rows = world_visits::list_recent_with_photo_counts(&mut tx, limit)
+        .await
+        .map_err(|e| e.to_string())?;
+    tx.commit().await.map_err(|e| format!("commit tx: {e}"))?;
+    Ok(rows.into_iter().map(VisitDto::from).collect())
 }
 
 /// 起動時に Bootstrap が検出済みの警告 (settings corrupt / DB OneDrive sync) を返す。

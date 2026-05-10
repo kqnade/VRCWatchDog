@@ -106,8 +106,9 @@
   <p class="mb-2 text-sm opacity-60">
     Phase 6 — log_watcher + projector + photo_scanner running.
   </p>
-  <nav class="mb-6 text-sm">
+  <nav class="mb-6 flex gap-4 text-sm">
     <a href="/photos" class="text-muted-foreground hover:underline">Photos →</a>
+    <a href="/history" class="text-muted-foreground hover:underline">Activity History →</a>
   </nav>
 
   <section class="mb-4 rounded-md border bg-card p-4 {healthBorderClass}">

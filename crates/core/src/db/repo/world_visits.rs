@@ -274,6 +274,66 @@ async fn finalize_left_only(
     Ok(())
 }
 
+/// `list_recent_with_photo_counts` の戻り値要素。activity_history 画面用。
+///
+/// `photo_count` は `photo_records` を `world_visit_id` で外部結合してカウントしたもの。
+/// 0 件 (写真なし visit) でも row は返る (LEFT JOIN + COUNT)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VisitWithCounts {
+    pub id: i64,
+    pub world_id: Option<String>,
+    pub world_name: String,
+    pub joined_utc: DateTime<Utc>,
+    pub left_utc: Option<DateTime<Utc>>,
+    pub resolution_state: String,
+    pub photo_count: i64,
+}
+
+/// 直近の visit を `joined_utc DESC` で最大 `limit` 件返す。各 row には紐づく
+/// `photo_records` の件数を `LEFT JOIN + COUNT` で同梱する。
+///
+/// `limit <= 0` は空 vec (他 repo helpers と揃えた防衛)。
+pub async fn list_recent_with_photo_counts(
+    tx: &mut Transaction<'_, Sqlite>,
+    limit: i64,
+) -> Result<Vec<VisitWithCounts>> {
+    use sqlx::Row;
+    if limit <= 0 {
+        return Ok(Vec::new());
+    }
+    let rows = sqlx::query(
+        "SELECT v.id AS id,
+                v.world_id AS world_id,
+                v.world_name AS world_name,
+                v.joined_utc AS joined_utc,
+                v.left_utc AS left_utc,
+                v.resolution_state AS resolution_state,
+                COUNT(pr.id) AS photo_count
+         FROM world_visits v
+         LEFT JOIN photo_records pr ON pr.world_visit_id = v.id
+         GROUP BY v.id
+         ORDER BY v.joined_utc DESC
+         LIMIT ?1",
+    )
+    .bind(limit)
+    .fetch_all(&mut **tx)
+    .await?;
+
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        out.push(VisitWithCounts {
+            id: row.try_get("id")?,
+            world_id: row.try_get("world_id")?,
+            world_name: row.try_get("world_name")?,
+            joined_utc: row.try_get("joined_utc")?,
+            left_utc: row.try_get("left_utc")?,
+            resolution_state: row.try_get("resolution_state")?,
+            photo_count: row.try_get("photo_count")?,
+        });
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
@@ -586,5 +646,190 @@ mod tests {
         assert_eq!(active.id, v2);
         assert_eq!(active.world_name, "B");
         assert_eq!(active.resolution_state, "Pending");
+    }
+
+    // -- list_recent_with_photo_counts (Phase 6.4) --------------------------------
+
+    /// photo_records に visit_id 付きで N 件 attach する helper。
+    async fn attach_n_photos(pool: &sqlx::SqlitePool, visit_id: i64, count: usize) {
+        use crate::db::repo::photo_records::{insert as insert_photo, PhotoRecordInput};
+        let mut tx = pool.begin().await.unwrap();
+        for i in 0..count {
+            insert_photo(
+                &mut tx,
+                &PhotoRecordInput {
+                    file_path: format!("C:/p/v{visit_id}-{i}.png").into(),
+                    file_name: format!("v{visit_id}-{i}.png"),
+                    taken_naive_local: nd(2026, 5, 9, 21, 0, 0),
+                    taken_utc: chrono::TimeZone::from_utc_datetime(
+                        &chrono::Utc,
+                        &nd(2026, 5, 9, 12, 0, 0),
+                    ),
+                    taken_tz_id: "Asia/Tokyo".into(),
+                    taken_offset_seconds: 32400,
+                    taken_resolution: "Single".into(),
+                    taken_tz_source: "CapturedRealtime".into(),
+                    taken_resolution_confidence: "High".into(),
+                    thumb_sha: None,
+                    world_visit_id: Some(visit_id),
+                },
+            )
+            .await
+            .unwrap();
+        }
+        tx.commit().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn list_recent_with_photo_counts_returns_empty_for_clean_db() {
+        let (pool, _dir) = fresh_pool().await;
+        let mut tx = pool.begin().await.unwrap();
+
+        let rows = list_recent_with_photo_counts(&mut tx, 100).await.unwrap();
+
+        assert!(rows.is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_recent_with_photo_counts_orders_by_joined_utc_descending() {
+        // Arrange: 2 visits at different times → DESC で newest が先頭
+        let (pool, _dir) = fresh_pool().await;
+        let mut tx = pool.begin().await.unwrap();
+        let pf = seed_pf(&mut tx).await;
+        let raw1 = seed_raw(
+            &mut tx,
+            pf,
+            0,
+            LogEvent::RoomEntering {
+                world_name: "A".into(),
+            },
+        )
+        .await;
+        let raw2 = seed_raw(
+            &mut tx,
+            pf,
+            1,
+            LogEvent::RoomEntering {
+                world_name: "B".into(),
+            },
+        )
+        .await;
+        // visit A: joined 12:00 / left 12:30
+        let v1 = insert_pending(&mut tx, raw1, "A", nd(2026, 5, 9, 12, 0, 0), ctx(), None)
+            .await
+            .unwrap();
+        finalize_for_next_entering(&mut tx, v1, nd(2026, 5, 9, 12, 30, 0), ctx(), None)
+            .await
+            .unwrap();
+        // visit B: joined 13:00 (newer)
+        let _v2 = insert_pending(&mut tx, raw2, "B", nd(2026, 5, 9, 13, 0, 0), ctx(), None)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        let mut tx = pool.begin().await.unwrap();
+        let rows = list_recent_with_photo_counts(&mut tx, 100).await.unwrap();
+
+        let names: Vec<_> = rows.iter().map(|v| v.world_name.as_str()).collect();
+        assert_eq!(names, vec!["B", "A"], "joined_utc DESC で newest が先");
+    }
+
+    #[tokio::test]
+    async fn list_recent_with_photo_counts_includes_zero_count_for_visits_without_photos() {
+        let (pool, _dir) = fresh_pool().await;
+        let mut tx = pool.begin().await.unwrap();
+        let pf = seed_pf(&mut tx).await;
+        let raw = seed_raw(
+            &mut tx,
+            pf,
+            0,
+            LogEvent::RoomEntering {
+                world_name: "A".into(),
+            },
+        )
+        .await;
+        let _v = insert_pending(&mut tx, raw, "A", nd(2026, 5, 9, 12, 0, 0), ctx(), None)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        let mut tx = pool.begin().await.unwrap();
+        let rows = list_recent_with_photo_counts(&mut tx, 100).await.unwrap();
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0].photo_count, 0,
+            "LEFT JOIN により photos 無しでも row 残る"
+        );
+    }
+
+    #[tokio::test]
+    async fn list_recent_with_photo_counts_counts_attached_photos_per_visit() {
+        // Arrange: 2 visits、photo を 3 件と 0 件で attach
+        let (pool, _dir) = fresh_pool().await;
+        let mut tx = pool.begin().await.unwrap();
+        let pf = seed_pf(&mut tx).await;
+        let raw1 = seed_raw(
+            &mut tx,
+            pf,
+            0,
+            LogEvent::RoomEntering {
+                world_name: "A".into(),
+            },
+        )
+        .await;
+        let raw2 = seed_raw(
+            &mut tx,
+            pf,
+            1,
+            LogEvent::RoomEntering {
+                world_name: "B".into(),
+            },
+        )
+        .await;
+        let v1 = insert_pending(&mut tx, raw1, "A", nd(2026, 5, 9, 12, 0, 0), ctx(), None)
+            .await
+            .unwrap();
+        let _v2 = insert_pending(&mut tx, raw2, "B", nd(2026, 5, 9, 13, 0, 0), ctx(), None)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        attach_n_photos(&pool, v1, 3).await;
+        // v2 には attach しない (photo_count=0)
+
+        let mut tx = pool.begin().await.unwrap();
+        let rows = list_recent_with_photo_counts(&mut tx, 100).await.unwrap();
+
+        // newest first → B (count=0), A (count=3)
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].world_name, "B");
+        assert_eq!(rows[0].photo_count, 0);
+        assert_eq!(rows[1].world_name, "A");
+        assert_eq!(rows[1].photo_count, 3);
+    }
+
+    #[tokio::test]
+    async fn list_recent_with_photo_counts_returns_empty_when_limit_is_zero() {
+        let (pool, _dir) = fresh_pool().await;
+        let mut tx = pool.begin().await.unwrap();
+        let pf = seed_pf(&mut tx).await;
+        let raw = seed_raw(
+            &mut tx,
+            pf,
+            0,
+            LogEvent::RoomEntering {
+                world_name: "A".into(),
+            },
+        )
+        .await;
+        let _ = insert_pending(&mut tx, raw, "A", nd(2026, 5, 9, 12, 0, 0), ctx(), None)
+            .await
+            .unwrap();
+
+        let zero = list_recent_with_photo_counts(&mut tx, 0).await.unwrap();
+        let neg = list_recent_with_photo_counts(&mut tx, -1).await.unwrap();
+
+        assert!(zero.is_empty());
+        assert!(neg.is_empty());
     }
 }
