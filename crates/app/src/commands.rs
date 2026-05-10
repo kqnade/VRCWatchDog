@@ -16,8 +16,9 @@ use std::path::PathBuf;
 
 use tauri::{AppHandle, State};
 use tauri_plugin_opener::OpenerExt;
+use vrcwatchdog_core::db::repo::photo_records;
 use vrcwatchdog_core::ipc::commands as core_cmd;
-use vrcwatchdog_core::ipc::commands::InitialWarnings;
+use vrcwatchdog_core::ipc::commands::{InitialWarnings, PhotoRecordDto};
 use vrcwatchdog_core::ipc::events::{OneDriveWarning, SettingsCorruptWarning};
 use vrcwatchdog_core::settings::Settings;
 
@@ -67,6 +68,27 @@ pub async fn save_settings(settings: Settings, state: State<'_, AppState>) -> Re
         .save(settings)
         .await
         .map_err(|e| e.to_string())
+}
+
+/// 直近の写真を `taken_utc` 降順で最大 `limit` 件返す (photo_grid 用)。
+///
+/// `limit <= 0` は repo 側で空 vec に短絡する。photo_records.list_recent と同じく
+/// read-only で副作用なし。tx は便宜上開いて即 commit (no-op)。
+#[tauri::command]
+pub async fn list_recent_photos(
+    limit: i64,
+    state: State<'_, AppState>,
+) -> Result<Vec<PhotoRecordDto>, String> {
+    let mut tx = state
+        .db_pool
+        .begin()
+        .await
+        .map_err(|e| format!("begin tx: {e}"))?;
+    let rows = photo_records::list_recent(&mut tx, limit)
+        .await
+        .map_err(|e| e.to_string())?;
+    tx.commit().await.map_err(|e| format!("commit tx: {e}"))?;
+    Ok(rows.into_iter().map(PhotoRecordDto::from).collect())
 }
 
 /// 起動時に Bootstrap が検出済みの警告 (settings corrupt / DB OneDrive sync) を返す。

@@ -49,6 +49,21 @@ export interface InitialWarnings {
   dbSyncRisk: OneDriveWarning | null;
 }
 
+// `list_recent_photos` の戻り値要素。core::ipc::commands::PhotoRecordDto と一致させる。
+//
+// taken_naive_local は backend で `%Y-%m-%d %H:%M:%S` 文字列にしてあるので
+// frontend は表示用に直接使える (Date 復元はしない)。
+export interface PhotoRecord {
+  id: number;
+  filePath: string;
+  fileName: string;
+  takenNaiveLocal: string;
+  /** ISO 8601 UTC string. */
+  takenUtc: string;
+  thumbSha: string | null;
+  worldVisitId: number | null;
+}
+
 // Settings は core::settings::store::Settings と一致させる (snake_case)。
 export interface Settings {
   log_directory: string | null;

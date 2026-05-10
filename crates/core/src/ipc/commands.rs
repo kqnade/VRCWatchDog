@@ -21,11 +21,48 @@
 
 use std::path::{Path, PathBuf};
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::db::repo::photo_records::PhotoRecord;
 use crate::ipc::events::{OneDriveWarning, SettingsCorruptWarning};
 use crate::photo::{validate_photo_path, PhotoAccessError, PhotoTarget};
 use crate::settings::Settings;
+
+/// `list_recent_photos` command の戻り値要素。
+///
+/// `db::repo::photo_records::PhotoRecord` を frontend 向けに変換した shape。
+/// repo 型に直接 serde を付けず DTO を切ることで、DB 列のリネーム / 追加が
+/// frontend の interface を直に揺らさないようにしてある。
+///
+/// `taken_naive_local` は repo の保存フォーマット (`%Y-%m-%d %H:%M:%S`) のまま
+/// 文字列で渡す。frontend 側は時刻表示のみで再パースしない設計 (UI が要求するなら
+/// 後から ISO 8601 化する別 endpoint を足す)。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PhotoRecordDto {
+    pub id: i64,
+    pub file_path: PathBuf,
+    pub file_name: String,
+    pub taken_naive_local: String,
+    pub taken_utc: DateTime<Utc>,
+    pub thumb_sha: Option<String>,
+    pub world_visit_id: Option<i64>,
+}
+
+impl From<PhotoRecord> for PhotoRecordDto {
+    fn from(r: PhotoRecord) -> Self {
+        Self {
+            id: r.id,
+            file_path: r.file_path,
+            file_name: r.file_name,
+            taken_naive_local: r.taken_naive_local.format("%Y-%m-%d %H:%M:%S").to_string(),
+            taken_utc: r.taken_utc,
+            thumb_sha: r.thumb_sha,
+            world_visit_id: r.world_visit_id,
+        }
+    }
+}
 
 /// `get_initial_warnings` command の戻り値。
 ///
@@ -153,6 +190,36 @@ mod tests {
             err,
             OpenPhotoError::Access(PhotoAccessError::OutsideScope { .. })
         ));
+    }
+
+    #[test]
+    fn photo_record_dto_serializes_taken_naive_local_as_string_in_camel_case() {
+        // PhotoRecordDto は frontend と camelCase で約束しているのを ratify する。
+        use chrono::{NaiveDate, TimeZone};
+        let dto = PhotoRecordDto {
+            id: 42,
+            file_path: PathBuf::from("C:/photos/VRChat_2026-05-10_12-34-56.png"),
+            file_name: "VRChat_2026-05-10_12-34-56.png".into(),
+            taken_naive_local: "2026-05-10 12:34:56".into(),
+            taken_utc: Utc.from_utc_datetime(
+                &NaiveDate::from_ymd_opt(2026, 5, 10)
+                    .expect("valid date")
+                    .and_hms_opt(3, 34, 56)
+                    .expect("valid time"),
+            ),
+            thumb_sha: None,
+            world_visit_id: Some(7),
+        };
+
+        let json = serde_json::to_string(&dto).expect("ser");
+
+        assert!(json.contains("\"id\":42"));
+        assert!(json.contains("\"filePath\""));
+        assert!(json.contains("\"fileName\""));
+        assert!(json.contains("\"takenNaiveLocal\":\"2026-05-10 12:34:56\""));
+        assert!(json.contains("\"takenUtc\""));
+        assert!(json.contains("\"thumbSha\":null"));
+        assert!(json.contains("\"worldVisitId\":7"));
     }
 
     #[test]

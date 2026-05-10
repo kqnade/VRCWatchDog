@@ -3,7 +3,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 
-import type { InitialWarnings, Settings } from './types';
+import type { InitialWarnings, PhotoRecord, Settings } from './types';
 
 /**
  * 写真原本を OS の関連付けされたアプリケーションで開く。
@@ -43,4 +43,14 @@ export function saveSettings(settings: Settings): Promise<void> {
  */
 export function getInitialWarnings(): Promise<InitialWarnings> {
   return invoke('get_initial_warnings');
+}
+
+/**
+ * 直近 `limit` 件の写真を `takenUtc` 降順で取得 (photo_grid 用)。
+ *
+ * limit <= 0 は backend 側で空配列に短絡される。Phase 6.3 で thumbSha が埋まれば
+ * grid 表示で使う thumbnail URL を frontend で組み立てる予定。
+ */
+export function listRecentPhotos(limit: number): Promise<PhotoRecord[]> {
+  return invoke('list_recent_photos', { limit });
 }
